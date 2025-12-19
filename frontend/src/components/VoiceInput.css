@@ -1,0 +1,240 @@
+/**
+ * Styles for VoiceInput component
+ */
+
+.voice-input {
+  background: var(--card-bg, #2a2a2a);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.voice-input.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.input-area {
+  position: relative;
+  margin-bottom: 0.75rem;
+}
+
+.transcription-input {
+  width: 100%;
+  padding: 0.75rem;
+  padding-right: 100px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 8px;
+  background: var(--input-bg, #1a1a1a);
+  color: var(--text-primary, #fff);
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+  box-sizing: border-box;
+}
+
+.transcription-input:focus {
+  outline: none;
+  border-color: var(--primary-color, #646cff);
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.2);
+}
+
+.transcription-input::placeholder {
+  color: var(--text-muted, #666);
+}
+
+.recording-indicator {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(239, 68, 68, 0.2);
+  border-radius: 4px;
+}
+
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.recording-time {
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: #ef4444;
+}
+
+.input-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-mic {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--secondary-bg, #333);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-mic:hover:not(:disabled) {
+  background: var(--secondary-hover, #444);
+  transform: scale(1.05);
+}
+
+.btn-mic.recording {
+  background: #ef4444;
+  animation: recording-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+
+.mic-icon {
+  font-size: 1.25rem;
+}
+
+.btn-reset {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  background: var(--secondary-bg, #333);
+  color: var(--text-secondary, #aaa);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-reset:hover:not(:disabled) {
+  background: var(--secondary-hover, #444);
+  color: var(--text-primary, #fff);
+}
+
+.btn-reset:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-submit {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary-color, #646cff);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-submit:hover:not(:disabled) {
+  background: var(--primary-hover, #535bf2);
+}
+
+.btn-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #ef4444;
+}
+
+.error-icon {
+  font-size: 1rem;
+}
+
+.processing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #888);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-color, #444);
+  border-top-color: var(--primary-color, #646cff);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .transcription-input {
+    background: #fff;
+    border-color: #ddd;
+    color: #333;
+  }
+
+  .btn-mic {
+    background: #e8e8e8;
+  }
+
+  .btn-mic:hover:not(:disabled) {
+    background: #d8d8d8;
+  }
+
+  .btn-reset {
+    background: #e8e8e8;
+    color: #666;
+  }
+
+  .btn-reset:hover:not(:disabled) {
+    background: #d8d8d8;
+    color: #333;
+  }
+}

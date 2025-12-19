@@ -1,0 +1,121 @@
+/**
+ * Styles for PracticePage
+ */
+
+.practice-page {
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.page-header {
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+.page-header h1 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.75rem;
+  color: var(--text-primary, #fff);
+}
+
+.page-subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-secondary, #888);
+}
+
+.practice-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.filter-sidebar {
+  position: sticky;
+  top: 1.5rem;
+}
+
+.practice-main {
+  min-height: 400px;
+}
+
+.error-message {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.error-message p {
+  margin: 0;
+  color: #ef4444;
+}
+
+.welcome-message {
+  background: var(--card-bg, #2a2a2a);
+  border-radius: 12px;
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.welcome-message h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  color: var(--text-primary, #fff);
+}
+
+.welcome-message p {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-secondary, #888);
+}
+
+.content-area {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.question-list-container,
+.question-detail-container {
+  min-width: 0;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .content-area {
+    grid-template-columns: 1fr;
+  }
+
+  .question-detail-container {
+    order: -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .practice-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-sidebar {
+    position: static;
+  }
+
+  .page-header {
+    text-align: center;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .welcome-message {
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  .welcome-message h2 {
+    color: #333;
+  }
+}
