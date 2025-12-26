@@ -12,12 +12,10 @@ interface QuestionFilterProps {
   isLoading?: boolean;
 }
 
-// Available subjects and units (can be fetched from API in production)
-const SUBJECTS = ['數學', '代數', '幾何'];
+// Available subjects and units matching database data
+const SUBJECTS = ['數學'];
 const UNITS: Record<string, string[]> = {
-  數學: ['整數運算', '分數運算', '小數運算', '比例'],
-  代數: ['一元一次方程式', '二元一次方程式', '多項式', '因式分解'],
-  幾何: ['三角形', '四邊形', '圓', '面積與體積'],
+  數學: ['代數', '幾何', '統計'],
 };
 
 const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {

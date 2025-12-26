@@ -39,18 +39,60 @@ export function VoiceInput({
     setIsProcessing(true);
     const audioBlob = await stopRecording();
     
-    // In a real implementation, this would send the audio to the ASR backend
-    // For now, we'll just pass the audio blob and let the parent handle it
     if (audioBlob) {
-      // Simulate transcription delay
-      setTimeout(() => {
-        setIsProcessing(false);
-        // The actual transcription would come from the backend
-        // For demo purposes, we'll use the text input
-      }, 500);
-    } else {
-      setIsProcessing(false);
+      try {
+        // Send audio to ASR backend for transcription
+        const formData = new FormData();
+        
+        // Determine file extension based on blob type
+        let filename = 'recording.webm';
+        if (audioBlob.type.includes('mp4') || audioBlob.type.includes('m4a')) {
+          filename = 'recording.mp4';
+        } else if (audioBlob.type.includes('ogg')) {
+          filename = 'recording.ogg';
+        }
+        
+        formData.append('audio', audioBlob, filename);
+        
+        console.log('Sending audio to ASR:', {
+          size: audioBlob.size,
+          type: audioBlob.type,
+          filename: filename,
+        });
+        
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/asr/transcribe`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
+        
+        console.log('ASR response status:', response.status);
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log('ASR result:', result);
+          if (result.text && result.text.trim()) {
+            setTranscription(result.text);
+          } else {
+            // Empty transcription - this is normal for silence or unclear audio
+            // Don't show error message, just leave the field empty for user to type
+            setTranscription('');
+          }
+        } else {
+          // If ASR fails, show placeholder to prompt text input
+          const errorData = await response.json().catch(() => ({}));
+          console.warn('ASR transcription failed:', response.status, errorData);
+          setTranscription('（語音辨識失敗，請直接輸入文字）');
+        }
+      } catch (error) {
+        console.error('ASR error:', error);
+        // ASR service might not be available, user can still type
+        setTranscription('（語音辨識暫不可用，請直接輸入文字）');
+      }
     }
+    setIsProcessing(false);
   }, [stopRecording]);
 
   const handleReset = useCallback(() => {

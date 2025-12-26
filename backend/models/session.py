@@ -27,6 +27,7 @@ class Session(Base):
     learning_metrics = relationship("LearningMetrics", back_populates="session", uselist=False)
     pauses = relationship("Pause", back_populates="session")
     hint_usages = relationship("HintUsage", back_populates="session")
+    error_records = relationship("ErrorRecord", back_populates="session")
 
 
 class ConversationTurn(Base):

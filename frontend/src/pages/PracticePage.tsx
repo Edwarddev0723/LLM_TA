@@ -3,7 +3,7 @@
  * Requirements: 1.1, 1.2 - 題目篩選與練習頁面
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { QuestionFilter } from '../components/QuestionFilter';
 import { QuestionList } from '../components/QuestionList';
 import { QuestionDetail } from '../components/QuestionDetail';
@@ -25,6 +25,25 @@ export function PracticePage({ studentId: _studentId, onStartSession }: Practice
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+
+  // Load all questions on initial mount
+  useEffect(() => {
+    const loadInitialQuestions = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const response = await questionApi.filterQuestions({});
+        setQuestions(response.questions);
+        setHasSearched(true);
+      } catch (err) {
+        console.error('Failed to load questions:', err);
+        setError('無法載入題目，請稍後再試');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadInitialQuestions();
+  }, []);
 
   const handleFilter = useCallback(async (criteria: QuestionCriteria) => {
     setIsLoading(true);

@@ -4,6 +4,11 @@
  */
 
 import { useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import type { ResponseType, HintLevel } from '../types';
 import './ConversationPanel.css';
 
@@ -84,7 +89,16 @@ export function ConversationPanel({ messages, isLoading }: ConversationPanelProp
             )}
 
             <div className="message-content">
-              <p>{message.text}</p>
+              {message.speaker === 'tutor' ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                >
+                  {message.text}
+                </ReactMarkdown>
+              ) : (
+                <p>{message.text}</p>
+              )}
             </div>
           </div>
         ))}

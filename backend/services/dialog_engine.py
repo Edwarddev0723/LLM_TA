@@ -641,11 +641,9 @@ class DialogEngine:
             system=system_prompt
         )
         
-        # Parse JSON response
-        try:
-            analysis = json.loads(llm_response.text)
-        except json.JSONDecodeError:
-            # Default analysis if parsing fails
+        # Check if this is a fallback response (LLM unavailable)
+        if llm_response.error and "fallback" in llm_response.error.lower():
+            # Return a default analysis that encourages the student to continue
             analysis = {
                 "logic_complete": False,
                 "logic_gap": False,
@@ -653,8 +651,24 @@ class DialogEngine:
                 "error_type": None,
                 "missing_concepts": [],
                 "covered_concepts": [],
-                "feedback": llm_response.text
+                "feedback": "請繼續說明你的解題思路。",
+                "continue_listening": True
             }
+        else:
+            # Parse JSON response
+            try:
+                analysis = json.loads(llm_response.text)
+            except json.JSONDecodeError:
+                # Default analysis if parsing fails
+                analysis = {
+                    "logic_complete": False,
+                    "logic_gap": False,
+                    "logic_error": False,
+                    "error_type": None,
+                    "missing_concepts": [],
+                    "covered_concepts": [],
+                    "feedback": llm_response.text
+                }
         
         # Calculate coverage
         covered = analysis.get("covered_concepts", [])

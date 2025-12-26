@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Math Tutor - API Connection Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #2196F3;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.online {
+            background: #4CAF50;
+            color: white;
+        }
+        .status.offline {
+            background: #f44336;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎓 AI Math Tutor - API 連接測試</h1>
+        
+        <div class="test-section">
+            <h2>後端狀態 <span id="backend-status" class="status offline">離線</span></h2>
+            <p>測試後端 API 是否正常運行</p>
+            <button onclick="testBackendHealth()">測試後端健康檢查</button>
+            <div id="backend-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>API 端點測試</h2>
+            <p>測試各個 API 端點是否可訪問</p>
+            <button onclick="testQuestionsAPI()">測試題目 API</button>
+            <button onclick="testSessionsAPI()">測試會話 API</button>
+            <button onclick="testErrorsAPI()">測試錯題 API</button>
+            <div id="api-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>CORS 測試</h2>
+            <p>測試跨域請求是否正常</p>
+            <button onclick="testCORS()">測試 CORS</button>
+            <div id="cors-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>系統資訊</h2>
+            <div class="info">
+                <p><strong>後端 URL:</strong> http://localhost:8000</p>
+                <p><strong>API 前綴:</strong> /api</p>
+                <p><strong>健康檢查:</strong> http://localhost:8000/api/health</p>
+                <p><strong>API 文件:</strong> <a href="http://localhost:8000/docs" target="_blank">http://localhost:8000/docs</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        async function testBackendHealth() {
+            const resultDiv = document.getElementById('backend-result');
+            const statusSpan = document.getElementById('backend-status');
+            
+            resultDiv.innerHTML = '<p>測試中...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/health`);
+                const data = await response.json();
+                
+                if (response.ok && data.status === 'healthy') {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <p>✅ 後端運行正常！</p>
+                            <p>狀態碼: ${response.status}</p>
+                            <p>回應: ${JSON.stringify(data, null, 2)}</p>
+                        </div>
+                    `;
+                    statusSpan.textContent = '在線';
+                    statusSpan.className = 'status online';
+                } else {
+                    throw new Error('健康檢查失敗');
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <p>❌ 後端連接失敗</p>
+                        <p>錯誤: ${error.message}</p>
+                        <p>請確認後端是否已啟動: ./start-backend.sh</p>
+                    </div>
+                `;
+                statusSpan.textContent = '離線';
+                statusSpan.className = 'status offline';
+            }
+        }
+
+        async function testQuestionsAPI() {
+            const resultDiv = document.getElementById('api-result');
+            resultDiv.innerHTML = '<p>測試題目 API...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/questions`);
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <div class="result success">
+                        <p>✅ 題目 API 正常</p>
+                        <p>狀態碼: ${response.status}</p>
+                        <p>找到 ${data.questions?.length || 0} 道題目</p>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <p>❌ 題目 API 失敗</p>
+                        <p>錯誤: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testSessionsAPI() {
+            const resultDiv = document.getElementById('api-result');
+            resultDiv.innerHTML = '<p>測試會話 API...</p>';
+            
+            try {
+                // Test POST endpoint
+                const response = await fetch(`${API_BASE}/api/sessions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        student_id: 'test-student',
+                        question_id: 'test-question'
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <p>✅ 會話 API 正常</p>
+                            <p>狀態碼: ${response.status}</p>
+                            <p>會話 ID: ${data.session_id || 'N/A'}</p>
+                        </div>
+                    `;
+                } else {
+                    // API exists but may return error due to invalid data
+                    resultDiv.innerHTML = `
+                        <div class="result info">
+                            <p>ℹ️ 會話 API 可訪問</p>
+                            <p>狀態碼: ${response.status}</p>
+                            <p>API 端點存在但需要有效資料</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <p>❌ 會話 API 失敗</p>
+                        <p>錯誤: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testErrorsAPI() {
+            const resultDiv = document.getElementById('api-result');
+            resultDiv.innerHTML = '<p>測試錯題 API...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/errors?student_id=test-student`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <p>✅ 錯題 API 正常</p>
+                            <p>狀態碼: ${response.status}</p>
+                            <p>找到 ${data.errors?.length || 0} 筆錯題記錄</p>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result info">
+                            <p>ℹ️ 錯題 API 可訪問</p>
+                            <p>狀態碼: ${response.status}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <p>❌ 錯題 API 失敗</p>
+                        <p>錯誤: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testCORS() {
+            const resultDiv = document.getElementById('cors-result');
+            resultDiv.innerHTML = '<p>測試 CORS...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/health`, {
+                    method: 'GET',
+                    headers: {
+                        'Origin': 'http://localhost:5173'
+                    }
+                });
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <p>✅ CORS 配置正確</p>
+                            <p>可以從前端應用訪問後端 API</p>
+                        </div>
+                    `;
+                } else {
+                    throw new Error('CORS 請求失敗');
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <p>❌ CORS 測試失敗</p>
+                        <p>錯誤: ${error.message}</p>
+                        <p>請檢查後端 CORS 配置</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Auto-test on page load
+        window.onload = () => {
+            testBackendHealth();
+        };
+    </script>
+</body>
+</html>

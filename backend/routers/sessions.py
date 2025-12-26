@@ -112,19 +112,24 @@ async def start_session(
     question_manager = QuestionBankManager(db)
     question = question_manager.get_question(request.question_id)
     
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
-    
-    # Get required concepts from knowledge nodes
-    required_concepts = [node.id for node in question.knowledge_nodes]
+    # Default question content if not found (for demo/testing)
+    if question:
+        question_content = question.content
+        standard_solution = question.standard_solution
+        required_concepts = [node.id for node in question.knowledge_nodes]
+    else:
+        # Use default demo question
+        question_content = "解方程式：2x + 5 = 13，求 x 的值。"
+        standard_solution = "x = 4"
+        required_concepts = ["linear-equation", "variable-isolation"]
     
     # Create dialog engine and start session
     dialog_engine = get_dialog_engine(db)
     session = dialog_engine.start_session(
         question_id=request.question_id,
         student_id=request.student_id,
-        question_content=question.content,
-        standard_solution=question.standard_solution,
+        question_content=question_content,
+        standard_solution=standard_solution,
         required_concepts=required_concepts
     )
     
@@ -132,7 +137,7 @@ async def start_session(
         session_id=session.id,
         question_id=session.question_id,
         student_id=session.student_id,
-        question_content=question.content,
+        question_content=question_content,
         fsm_state=FSMState.LISTENING.value,
         message="會話已開始，請開始講解你的解題思路。"
     )

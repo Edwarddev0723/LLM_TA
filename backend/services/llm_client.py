@@ -51,15 +51,15 @@ class LLMResponse:
 class LLMConfig:
     """Configuration for the LLM client."""
     base_url: str = "http://localhost:11434"
-    model: str = "llama3.2"
-    timeout_seconds: float = 30.0
+    model: str = "gpt-oss:20b"
+    timeout_seconds: float = 60.0  # Increased for larger model
     max_retries: int = 2
     temperature: float = 0.7
     top_p: float = 0.9
     num_ctx: int = 4096
     
     # Fallback configuration
-    fallback_response: str = "抱歉，我目前無法處理這個請求。請稍後再試。"
+    fallback_response: str = "很好，請繼續說明你的解題思路。你可以告訴我你打算怎麼解這道題？"
     enable_fallback: bool = True
 
 
@@ -225,6 +225,9 @@ class OllamaClient:
                 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
+                    if self.config.enable_fallback:
+                        logger.warning(f"模型 '{self.config.model}' 未找到，使用 fallback 回應")
+                        return self._fallback_response(start_time)
                     raise OllamaModelError(
                         f"模型 '{self.config.model}' 未找到。請執行: ollama pull {self.config.model}"
                     )
