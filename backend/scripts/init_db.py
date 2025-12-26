@@ -4,6 +4,7 @@
 """
 import sys
 import os
+import hashlib
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -12,6 +13,13 @@ from datetime import datetime
 from backend.models.database import Base, engine, SessionLocal
 from backend.models.knowledge import KnowledgeNode, KnowledgeRelation
 from backend.models.question import Question, Misconception, Hint
+from backend.models.user import User, UserRole, VerificationStatus
+
+
+def hash_password(password: str) -> str:
+    """Simple password hashing using SHA256 with salt."""
+    salt = "ai_math_tutor_salt"
+    return hashlib.sha256(f"{password}{salt}".encode()).hexdigest()
 
 
 def create_tables():
@@ -19,6 +27,97 @@ def create_tables():
     print("建立資料庫表格...")
     Base.metadata.create_all(bind=engine)
     print("✓ 表格建立完成")
+
+
+def create_default_users(db):
+    """建立預設測試帳號"""
+    print("建立預設測試帳號...")
+    
+    default_users = [
+        # 管理員
+        {
+            "email": "admin@test.com",
+            "password": "admin123",
+            "role": UserRole.ADMIN,
+            "full_name": "系統管理員"
+        },
+        # 老師
+        {
+            "email": "teacher@test.com",
+            "password": "teacher123",
+            "role": UserRole.TEACHER,
+            "full_name": "王老師"
+        },
+        {
+            "email": "teacher2@test.com",
+            "password": "teacher123",
+            "role": UserRole.TEACHER,
+            "full_name": "李老師"
+        },
+        # 學生
+        {
+            "email": "student@test.com",
+            "password": "student123",
+            "role": UserRole.STUDENT,
+            "full_name": "小明",
+            "grade": "國中二年級"
+        },
+        {
+            "email": "student2@test.com",
+            "password": "student123",
+            "role": UserRole.STUDENT,
+            "full_name": "小華",
+            "grade": "國中一年級"
+        },
+        {
+            "email": "student3@test.com",
+            "password": "student123",
+            "role": UserRole.STUDENT,
+            "full_name": "小美",
+            "grade": "國中三年級"
+        },
+        # 家長
+        {
+            "email": "parent@test.com",
+            "password": "parent123",
+            "role": UserRole.PARENT,
+            "full_name": "陳爸爸",
+            "student_name": "小明"
+        },
+    ]
+    
+    created_count = 0
+    for user_data in default_users:
+        existing = db.query(User).filter(User.email == user_data["email"]).first()
+        if not existing:
+            user = User(
+                email=user_data["email"],
+                password_hash=hash_password(user_data["password"]),
+                role=user_data["role"],
+                full_name=user_data["full_name"],
+                grade=user_data.get("grade"),
+                student_name=user_data.get("student_name"),
+                verification_status=VerificationStatus.APPROVED
+            )
+            db.add(user)
+            created_count += 1
+    
+    db.commit()
+    print(f"✓ 建立 {created_count} 個預設帳號")
+    
+    # 顯示帳號資訊
+    print("\n📋 預設測試帳號：")
+    print("-" * 50)
+    print(f"{'角色':<10} {'Email':<25} {'密碼':<15}")
+    print("-" * 50)
+    print(f"{'管理員':<10} {'admin@test.com':<25} {'admin123':<15}")
+    print(f"{'老師':<10} {'teacher@test.com':<25} {'teacher123':<15}")
+    print(f"{'老師':<10} {'teacher2@test.com':<25} {'teacher123':<15}")
+    print(f"{'學生':<10} {'student@test.com':<25} {'student123':<15}")
+    print(f"{'學生':<10} {'student2@test.com':<25} {'student123':<15}")
+    print(f"{'學生':<10} {'student3@test.com':<25} {'student123':<15}")
+    print(f"{'家長':<10} {'parent@test.com':<25} {'parent123':<15}")
+    print("-" * 50)
 
 
 def create_sample_knowledge_nodes(db):
@@ -338,6 +437,7 @@ def main():
     # 建立範例資料
     db = SessionLocal()
     try:
+        create_default_users(db)
         create_sample_knowledge_nodes(db)
         create_sample_questions(db)
         print("=" * 50)
