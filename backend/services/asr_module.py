@@ -7,6 +7,10 @@ with support for streaming transcription and math symbol post-processing.
 Requirements: 5.1, 5.3
 """
 
+import os
+# Fix OpenMP duplicate library issue on macOS
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, List
@@ -60,13 +64,23 @@ class TranscriptionResult:
 @dataclass
 class ASRConfig:
     """Configuration for the ASR module."""
-    model_size: WhisperModelSize = WhisperModelSize.BASE
+    model_size: WhisperModelSize = WhisperModelSize.SMALL  # 使用 small 模型提升速度
     language: str = "zh"  # Chinese
     task: str = "transcribe"
     fp16: bool = False  # Use FP32 for CPU compatibility
     device: str = "cpu"  # Default to CPU for MacBook compatibility
     silence_threshold: float = 0.5  # Seconds of silence to detect pause
     max_audio_length: float = 30.0  # Maximum audio length in seconds
+    # 繁體中文優化參數
+    initial_prompt: str = "以下是繁體中文數學教學對話。"  # 引導模型輸出繁體中文
+    temperature: float = 0.0  # 降低隨機性，提高準確度
+    beam_size: int = 5  # 增加 beam search 寬度
+    best_of: int = 5  # 生成多個候選並選最佳
+    condition_on_previous_text: bool = True  # 利用上下文提升準確度
+    # LLM 後處理設定
+    use_llm_correction: bool = True  # 是否使用 LLM 修正
+    llm_model: str = "gemma3:4b"  # LLM 模型名稱
+    llm_base_url: str = "http://localhost:11434"  # Ollama API URL
 
 
 class TranscriptionStream:
@@ -206,14 +220,17 @@ MATH_SYMBOL_MAPPINGS = {
     "約等於": "≈",
     "约等于": "≈",
     
-    # Arithmetic operators (Chinese)
-    "加": "+",
-    "減": "-",
-    "减": "-",
-    "乘": "×",
+    # Arithmetic operators (Chinese) - use more specific terms to avoid false matches
+    "加上": "+",
+    "加法": "+",
+    "減去": "-",
+    "减去": "-",
+    "減法": "-",
+    "减法": "-",
     "乘以": "×",
-    "除": "÷",
+    "乘法": "×",
     "除以": "÷",
+    "除法": "÷",
     "正負": "±",
     "正负": "±",
     
@@ -253,13 +270,391 @@ MATH_SYMBOL_MAPPINGS = {
     # Logic (Chinese)
     "且": "∧",
     "或": "∨",
-    "非": "¬",
+    "邏輯非": "¬",
+    "逻辑非": "¬",
     "若且唯若": "⟺",
     "若則": "⟹",
     "若则": "⟹",
     "因此": "∴",
     "因為": "∵",
     "因为": "∵",
+}
+
+# 簡體轉繁體常用字對照表（數學教學相關）
+# 包含單字和詞組，處理時會按長度排序（長詞優先）
+SIMPLIFIED_TO_TRADITIONAL = {
+    # 重要單字（確保基本轉換）
+    "于": "於",  # 用於 "大于" -> "大於" 等
+    "与": "與",
+    "为": "為",
+    "从": "從",
+    "会": "會",
+    "这": "這",
+    "学": "學",
+    "问": "問",
+    "说": "說",
+    "让": "讓",
+    "给": "給",
+    "对": "對",
+    "错": "錯",
+    "变": "變",
+    "换": "換",
+    "开": "開",
+    "关": "關",
+    "过": "過",
+    "进": "進",
+    "来": "來",
+    "发": "發",
+    "现": "現",
+    "见": "見",
+    "听": "聽",
+    "写": "寫",
+    "读": "讀",
+    "认": "認",
+    "识": "識",
+    "应": "應",
+    "该": "該",
+    "须": "須",
+    "经": "經",
+    "继": "繼",
+    "连": "連",
+    "还": "還",
+    "并": "並",
+    "数": "數",
+    "计": "計",
+    "题": "題",
+    "答": "答",
+    "解": "解",
+    "证": "證",
+    "验": "驗",
+    "设": "設",
+    "条": "條",
+    "结": "結",
+    "论": "論",
+    "则": "則",
+    "当": "當",
+    "时": "時",
+    "点": "點",
+    "线": "線",
+    "边": "邊",
+    "长": "長",
+    "宽": "寬",
+    "面": "面",
+    "积": "積",
+    "体": "體",
+    "图": "圖",
+    "形": "形",
+    "圆": "圓",
+    "周": "周",
+    "角": "角",
+    "方": "方",
+    "程": "程",
+    "式": "式",
+    "等": "等",
+    "号": "號",
+    "符": "符",
+    "项": "項",
+    "移": "移",
+    "系": "係",
+    "根": "根",
+    "次": "次",
+    "元": "元",
+    "正": "正",
+    "负": "負",
+    "整": "整",
+    "分": "分",
+    "比": "比",
+    "较": "較",
+    "倍": "倍",
+    "余": "餘",
+    "商": "商",
+    "和": "和",
+    "差": "差",
+    "乘": "乘",
+    "除": "除",
+    "加": "加",
+    "减": "減",
+    "平": "平",
+    "立": "立",
+    "幂": "冪",
+    "指": "指",
+    "底": "底",
+    "函": "函",
+    "常": "常",
+    "未": "未",
+    "已": "已",
+    "求": "求",
+    "得": "得",
+    "所": "所",
+    "因": "因",
+    "如": "如",
+    "果": "果",
+    "那": "那",
+    "么": "麼",
+    "什": "什",
+    "怎": "怎",
+    "样": "樣",
+    "哪": "哪",
+    "里": "裡",
+    "几": "幾",
+    "个": "個",
+    "两": "兩",
+    "双": "雙",
+    "单": "單",
+    "位": "位",
+    "第": "第",
+    "每": "每",
+    "全": "全",
+    "部": "部",
+    "总": "總",
+    "共": "共",
+    "同": "同",
+    "异": "異",
+    "类": "類",
+    "种": "種",
+    "组": "組",
+    "排": "排",
+    "列": "列",
+    "选": "選",
+    "择": "擇",
+    "确": "確",
+    "定": "定",
+    "满": "滿",
+    "足": "足",
+    "够": "夠",
+    "多": "多",
+    "少": "少",
+    "大": "大",
+    "小": "小",
+    "最": "最",
+    "极": "極",
+    "值": "值",
+    "范": "範",
+    "围": "圍",
+    "区": "區",
+    "间": "間",
+    "内": "內",
+    "外": "外",
+    "上": "上",
+    "下": "下",
+    "左": "左",
+    "右": "右",
+    "前": "前",
+    "后": "後",
+    "先": "先",
+    "再": "再",
+    "又": "又",
+    "也": "也",
+    "都": "都",
+    "只": "只",
+    "就": "就",
+    "才": "才",
+    "很": "很",
+    "太": "太",
+    "更": "更",
+    "非": "非",
+    "特": "特",
+    "别": "別",
+    "真": "真",
+    "假": "假",
+    "实": "實",
+    "际": "際",
+    "其": "其",
+    "他": "他",
+    "她": "她",
+    "它": "它",
+    "我": "我",
+    "你": "你",
+    "们": "們",
+    "自": "自",
+    "己": "己",
+    "本": "本",
+    "原": "原",
+    "新": "新",
+    "旧": "舊",
+    "好": "好",
+    "坏": "壞",
+    "难": "難",
+    "困": "困",
+    "易": "易",
+    "容": "容",
+    "简": "簡",
+    "复": "複",
+    "杂": "雜",
+    "清": "清",
+    "楚": "楚",
+    "明": "明",
+    "白": "白",
+    "懂": "懂",
+    "理": "理",
+    "道": "道",
+    "知": "知",
+    "想": "想",
+    "思": "思",
+    "考": "考",
+    "虑": "慮",
+    "记": "記",
+    "住": "住",
+    "忘": "忘",
+    "注": "注",
+    "意": "意",
+    "看": "看",
+    "试": "試",
+    "尝": "嘗",
+    "做": "做",
+    "作": "作",
+    "用": "用",
+    "使": "使",
+    "利": "利",
+    "帮": "幫",
+    "助": "助",
+    "需": "需",
+    "要": "要",
+    "能": "能",
+    "可": "可",
+    "以": "以",
+    "必": "必",
+    
+    # 常用詞組（長詞優先處理）
+    "这个": "這個", "这里": "這裡", "这样": "這樣",
+    "那个": "那個", "那里": "那裡", "那样": "那樣",
+    "学会": "學會", "不会": "不會",
+    "学习": "學習", "数学": "數學",
+    "问题": "問題", "请问": "請問",
+    "说明": "說明",
+    "让我": "讓我",
+    "给你": "給你",
+    "对不对": "對不對", "对的": "對的",
+    "错误": "錯誤", "错了": "錯了",
+    "变成": "變成", "改变": "改變",
+    "交换": "交換",
+    "开始": "開始",
+    "关系": "關係",
+    "经过": "經過", "通过": "通過",
+    "进行": "進行",
+    "出来": "出來", "起来": "起來",
+    "发现": "發現",
+    "现在": "現在", "出现": "出現",
+    "看见": "看見",
+    "听说": "聽說",
+    "写出": "寫出",
+    "读作": "讀作",
+    "认为": "認為",
+    "认识": "認識", "知识": "知識",
+    "应该": "應該",
+    "必须": "必須",
+    "已经": "已經", "经常": "經常",
+    "继续": "繼續",
+    "连接": "連接",
+    "还是": "還是", "还有": "還有",
+    "并且": "並且",
+    # 數學術語詞組
+    "数字": "數字", "数值": "數值", "数量": "數量",
+    "计算": "計算", "设计": "設計",
+    "题目": "題目", "习题": "習題",
+    "答案": "答案", "回答": "回答",
+    "解答": "解答", "解题": "解題", "解方程": "解方程",
+    "证明": "證明", "验证": "驗證",
+    "假设": "假設",
+    "条件": "條件",
+    "结果": "結果", "结论": "結論",
+    "否则": "否則",
+    "当时": "當時",
+    "时候": "時候",
+    "点数": "點數",
+    "直线": "直線", "曲线": "曲線",
+    "边长": "邊長",
+    "长度": "長度",
+    "宽度": "寬度",
+    "面积": "面積",
+    "体积": "體積", "乘积": "乘積",
+    "图形": "圖形",
+    "圆形": "圓形", "圆周": "圓周",
+    "周长": "周長",
+    "角度": "角度", "三角": "三角",
+    "方程": "方程", "方向": "方向",
+    "公式": "公式", "等式": "等式",
+    "等号": "等號", "符号": "符號",
+    "移项": "移項",
+    "系数": "係數",
+    "根号": "根號",
+    "一次": "一次", "二次": "二次",
+    "一元": "一元", "二元": "二元",
+    "正数": "正數", "正确": "正確",
+    "负数": "負數",
+    "整数": "整數",
+    "分数": "分數", "分母": "分母", "分子": "分子",
+    "比例": "比例", "比较": "比較",
+    "余数": "餘數",
+    "平方": "平方", "平均": "平均",
+    "立方": "立方",
+    "次幂": "次冪",
+    "指数": "指數",
+    "对数": "對數",
+    "底数": "底數",
+    "函数": "函數",
+    "变量": "變量", "变数": "變數",
+    "常数": "常數",
+    "未知": "未知", "未知数": "未知數",
+    "已知": "已知",
+    "得到": "得到",
+    "所以": "所以",
+    "因为": "因為", "因此": "因此",
+    "如果": "如果",
+    "那么": "那麼",
+    "什么": "什麼",
+    "怎么": "怎麼", "怎样": "怎樣",
+    "哪个": "哪個", "哪里": "哪裡",
+    "几个": "幾個",
+    "单位": "單位",
+    "总共": "總共", "总和": "總和",
+    "相同": "相同", "同样": "同樣",
+    "不同": "不同",
+    "分类": "分類",
+    "种类": "種類",
+    "一组": "一組",
+    "排列": "排列",
+    "选择": "選擇",
+    "确定": "確定",
+    "满足": "滿足",
+    "足够": "足夠",
+    "多少": "多少",
+    "最大": "最大", "最小": "最小",
+    "极值": "極值",
+    "范围": "範圍",
+    "区间": "區間",
+    "然后": "然後", "之后": "之後",
+    "首先": "首先",
+    "非常": "非常",
+    "特别": "特別",
+    "实际": "實際", "其实": "其實",
+    "其他": "其他",
+    "我们": "我們",
+    "你们": "你們",
+    "自己": "自己",
+    "原来": "原來",
+    "困难": "困難",
+    "容易": "容易",
+    "简单": "簡單",
+    "复杂": "複雜",
+    "清楚": "清楚",
+    "明白": "明白",
+    "道理": "道理", "理解": "理解",
+    "知道": "知道",
+    "想想": "想想",
+    "思考": "思考",
+    "考虑": "考慮",
+    "记住": "記住",
+    "忘记": "忘記",
+    "注意": "注意",
+    "看看": "看看",
+    "试试": "試試", "尝试": "嘗試",
+    "使用": "使用", "利用": "利用",
+    "帮助": "幫助",
+    "需要": "需要",
+    "能够": "能夠",
+    "可以": "可以", "可能": "可能",
+    "以后": "以後",
 }
 
 # Reverse mapping for converting symbols back to oral descriptions
@@ -400,11 +795,20 @@ class ASRModule:
             self.load_model()
         
         try:
+            # 使用優化參數進行轉錄
             result = self._model.transcribe(
                 audio_path,
                 language=language or self.config.language,
                 task=self.config.task,
-                fp16=self.config.fp16
+                fp16=self.config.fp16,
+                # 繁體中文優化參數
+                initial_prompt=self.config.initial_prompt,
+                temperature=self.config.temperature,
+                beam_size=self.config.beam_size,
+                best_of=self.config.best_of,
+                condition_on_previous_text=self.config.condition_on_previous_text,
+                # 啟用 word timestamps
+                word_timestamps=True,
             )
             
             # Extract word timestamps if available
@@ -621,5 +1025,208 @@ class ASRModule:
         
         for symbol, oral in sorted_mappings:
             result = result.replace(symbol, oral)
+        
+        return result
+    
+    @staticmethod
+    def convert_simplified_to_traditional(text: str) -> str:
+        """
+        Convert simplified Chinese characters to traditional Chinese.
+        
+        Args:
+            text: Text potentially containing simplified Chinese characters.
+        
+        Returns:
+            Text with simplified characters converted to traditional.
+        
+        This helps improve ASR output quality for Traditional Chinese users,
+        as Whisper sometimes outputs simplified Chinese even with zh-TW settings.
+        
+        Examples:
+            "这个数学问题" -> "這個數學問題"
+            "计算结果" -> "計算結果"
+        """
+        result = text
+        
+        # Sort mappings by length (longest first) to handle multi-character words first
+        # This prevents partial replacements (e.g., "数学" should be replaced before "数")
+        sorted_mappings = sorted(
+            SIMPLIFIED_TO_TRADITIONAL.items(),
+            key=lambda x: len(x[0]),
+            reverse=True
+        )
+        
+        for simplified, traditional in sorted_mappings:
+            result = result.replace(simplified, traditional)
+        
+        return result
+    
+    @staticmethod
+    def full_post_process(text: str) -> str:
+        """
+        Apply all post-processing steps to transcribed text.
+        
+        This combines:
+        1. Math symbol conversion (oral to symbols) - FIRST to catch both simplified/traditional
+        2. Simplified to Traditional Chinese conversion - SECOND for remaining text
+        
+        Args:
+            text: Raw transcribed text from Whisper.
+        
+        Returns:
+            Fully processed text ready for display.
+        """
+        # First convert oral math descriptions to symbols
+        # (math mappings include both simplified and traditional versions)
+        result = ASRModule.post_process_math_symbols(text)
+        # Then convert remaining simplified to traditional Chinese
+        result = ASRModule.convert_simplified_to_traditional(result)
+        return result
+    
+    @staticmethod
+    def llm_correct_transcription(
+        text: str,
+        model: str = "gemma3:4b",
+        base_url: str = "http://localhost:11434"
+    ) -> str:
+        """
+        Use LLM to correct and improve ASR transcription.
+        
+        Args:
+            text: Raw transcribed text from Whisper.
+            model: Ollama model name for correction.
+            base_url: Ollama API base URL.
+        
+        Returns:
+            Corrected text with improved accuracy.
+        """
+        import requests
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        if not text or not text.strip():
+            return text
+        
+        # Prompt for ASR correction - focused on math education context
+        prompt = f"""修正語音辨識錯誤，簡體轉繁體。保持數字為阿拉伯數字(1,2,3...)，不要改成中文數字。
+
+{text}"""
+
+        try:
+            response = requests.post(
+                f"{base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,  # Low temperature for consistent output
+                        "num_predict": 200,  # Limit output length
+                    }
+                },
+                timeout=30  # 30 second timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                corrected = result.get("response", "").strip()
+                
+                # Validate the correction - if it's too different or empty, use original
+                if corrected and len(corrected) > 0:
+                    # Remove any leading/trailing quotes or extra whitespace
+                    corrected = corrected.strip('"\'').strip()
+                    
+                # If LLM returned something reasonable, use it
+                    if len(corrected) >= len(text) * 0.5 and len(corrected) <= len(text) * 2:
+                        # Clean up: remove trailing punctuation that LLM might add
+                        corrected = corrected.rstrip('。，！？.!?,')
+                        logger.info(f"LLM correction: '{text}' -> '{corrected}'")
+                        return corrected
+                
+                logger.warning(f"LLM correction rejected, using original: '{text}'")
+                return text
+            else:
+                logger.warning(f"LLM API error {response.status_code}, using original text")
+                return text
+                
+        except requests.exceptions.Timeout:
+            logger.warning("LLM correction timeout, using original text")
+            return text
+        except requests.exceptions.ConnectionError:
+            logger.warning("LLM service unavailable, using original text")
+            return text
+        except Exception as e:
+            logger.warning(f"LLM correction failed: {e}, using original text")
+            return text
+    
+    @staticmethod
+    def convert_chinese_numbers_to_arabic(text: str) -> str:
+        """
+        Convert Chinese numbers to Arabic numerals.
+        
+        Args:
+            text: Text containing Chinese numbers.
+        
+        Returns:
+            Text with Chinese numbers converted to Arabic.
+        """
+        import re
+        
+        # Single digit mapping
+        digit_map = {
+            "零": "0", "〇": "0",
+            "一": "1", "二": "2", "三": "3", "四": "4",
+            "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
+        }
+        
+        result = text
+        
+        # Handle "十X" pattern (10-19)
+        result = re.sub(r'十([一二三四五六七八九])', lambda m: f"1{digit_map[m.group(1)]}", result)
+        result = result.replace("十", "10")
+        
+        # Handle single digits
+        for chinese, arabic in digit_map.items():
+            result = result.replace(chinese, arabic)
+        
+        return result
+    
+    @staticmethod
+    def full_post_process_with_llm(
+        text: str,
+        model: str = "gemma3:4b",
+        base_url: str = "http://localhost:11434"
+    ) -> str:
+        """
+        Apply all post-processing steps including LLM correction.
+        
+        Pipeline:
+        1. Whisper Small output
+        2. LLM correction (gemma3:4b) - fix typos, convert to traditional Chinese
+        3. Math symbol conversion
+        
+        Args:
+            text: Raw transcribed text from Whisper.
+            model: Ollama model name for correction.
+            base_url: Ollama API base URL.
+        
+        Returns:
+            Fully processed and corrected text.
+        """
+        if not text or not text.strip():
+            return text
+        
+        # Step 1: LLM correction (handles typos and simplified->traditional)
+        corrected = ASRModule.llm_correct_transcription(text, model, base_url)
+        
+        # Step 2: Math symbol conversion (oral -> symbols)
+        result = ASRModule.post_process_math_symbols(corrected)
+        
+        # Step 3: Convert Chinese numbers back to Arabic (LLM sometimes converts them)
+        result = ASRModule.convert_chinese_numbers_to_arabic(result)
+        
+        # Step 4: Final simplified->traditional pass (in case LLM missed some)
+        result = ASRModule.convert_simplified_to_traditional(result)
         
         return result

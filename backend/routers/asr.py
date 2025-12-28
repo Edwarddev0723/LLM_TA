@@ -159,8 +159,18 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         
         logger.info(f"Transcription result: '{result.text}', confidence: {result.confidence}")
         
-        # Post-process math symbols
-        processed_text = ASRModule.post_process_math_symbols(result.text)
+        # Post-process with LLM correction (Whisper Small + Gemma3:4b)
+        if asr.config.use_llm_correction:
+            processed_text = ASRModule.full_post_process_with_llm(
+                result.text,
+                model=asr.config.llm_model,
+                base_url=asr.config.llm_base_url
+            )
+        else:
+            # Fallback to basic post-processing without LLM
+            processed_text = ASRModule.full_post_process(result.text)
+        
+        logger.info(f"Post-processed text: '{processed_text}'")
         
         return TranscriptionResponse(
             text=processed_text,
@@ -204,6 +214,42 @@ async def convert_math_symbols(request: TranscriptionTextRequest):
     - Converts text like "x平方" to "x²"
     """
     converted = ASRModule.post_process_math_symbols(request.text)
+    return MathSymbolResponse(
+        original=request.text,
+        converted=converted
+    )
+
+
+class SimplifiedToTraditionalResponse(BaseModel):
+    """Response model for simplified to traditional conversion."""
+    original: str
+    converted: str
+
+
+@router.post("/convert-traditional", response_model=SimplifiedToTraditionalResponse)
+async def convert_to_traditional(request: TranscriptionTextRequest):
+    """
+    Convert simplified Chinese to traditional Chinese.
+    
+    Useful for testing the conversion mapping.
+    """
+    converted = ASRModule.convert_simplified_to_traditional(request.text)
+    return SimplifiedToTraditionalResponse(
+        original=request.text,
+        converted=converted
+    )
+
+
+@router.post("/full-process", response_model=MathSymbolResponse)
+async def full_process_text(request: TranscriptionTextRequest):
+    """
+    Apply full post-processing to text.
+    
+    Combines:
+    1. Simplified to Traditional Chinese conversion
+    2. Math symbol conversion
+    """
+    converted = ASRModule.full_post_process(request.text)
     return MathSymbolResponse(
         original=request.text,
         converted=converted

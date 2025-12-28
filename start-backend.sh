@@ -5,6 +5,11 @@
 echo "🚀 Starting AI Math Tutor Backend..."
 echo ""
 
+# Fix OpenMP duplicate library issue on macOS (for Whisper ASR)
+export KMP_DUPLICATE_LIB_OK=TRUE
+# Suppress OpenMP deprecation warnings
+export KMP_WARNINGS=0
+
 # Check if virtual environment exists
 if [ ! -d "backend/venv" ]; then
     echo "❌ Virtual environment not found!"

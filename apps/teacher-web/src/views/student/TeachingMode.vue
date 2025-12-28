@@ -80,10 +80,16 @@
               :class="{ active: isRecording }"
               @click="toggleRecording"
               :disabled="!sessionId || status === 'processing'"
+              :title="isRecording ? '點擊停止錄音' : '點擊開始錄音'"
             >
-              🎙️
+              {{ isRecording ? '⏹️' : '🎙️' }}
             </button>
+            <div v-if="isRecording" class="recording-indicator">
+              <span class="recording-dot"></span>
+              <span class="recording-text">錄音中...</span>
+            </div>
             <input 
+              v-else
               type="text" 
               v-model="userInput"
               placeholder="輸入訊息或按住麥克風說話..."
@@ -94,7 +100,7 @@
             <button 
               class="send-btn" 
               @click="sendMessage" 
-              :disabled="!userInput.trim() || !sessionId || status === 'processing'"
+              :disabled="!userInput.trim() || !sessionId || status === 'processing' || isRecording"
             >
               發送
             </button>
@@ -163,6 +169,11 @@ const userInput = ref('');
 const chatContainer = ref(null);
 const whiteboardRef = ref(null);
 
+// Audio recording state
+let mediaRecorder = null;
+let audioChunks = [];
+let recordingStream = null;
+
 // FSM state mapping
 const fsmStateLabels = {
   IDLE: '待機',
@@ -213,6 +224,16 @@ function addMessage(role, text, responseType = null) {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
     }
   });
+  
+  // Auto-clear system messages after 5 seconds
+  if (role === 'system') {
+    setTimeout(() => {
+      const idx = chatMessages.value.findIndex(m => m.text === text && m.role === 'system');
+      if (idx !== -1) {
+        chatMessages.value.splice(idx, 1);
+      }
+    }, 5000);
+  }
 }
 
 // API calls
@@ -361,15 +382,119 @@ async function endSession() {
 function toggleRecording() {
   if (!sessionId.value) return;
   
-  isRecording.value = !isRecording.value;
-  
   if (isRecording.value) {
-    // TODO: Implement actual audio recording with ASR
-    // For now, simulate recording
-    setTimeout(() => {
-      isRecording.value = false;
-      userInput.value = '我先把 5 移到等號右邊，變成 2x = 13 - 5';
-    }, 3000);
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+async function startRecording() {
+  try {
+    // Request microphone access
+    recordingStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true
+      } 
+    });
+    
+    // Determine supported MIME type
+    let mimeType = 'audio/webm';
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      mimeType = 'audio/webm;codecs=opus';
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      mimeType = 'audio/mp4';
+    } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+      mimeType = 'audio/ogg';
+    }
+    
+    mediaRecorder = new MediaRecorder(recordingStream, { mimeType });
+    audioChunks = [];
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+    
+    mediaRecorder.onstop = async () => {
+      // Create blob from chunks
+      const audioBlob = new Blob(audioChunks, { type: mimeType });
+      
+      // Send to ASR API
+      await transcribeAudio(audioBlob);
+      
+      // Clean up
+      if (recordingStream) {
+        recordingStream.getTracks().forEach(track => track.stop());
+        recordingStream = null;
+      }
+    };
+    
+    mediaRecorder.start();
+    isRecording.value = true;
+    
+  } catch (err) {
+    console.error('Failed to start recording:', err);
+    if (err.name === 'NotAllowedError') {
+      errorMessage.value = '請允許麥克風權限以使用語音輸入';
+    } else if (err.name === 'NotFoundError') {
+      errorMessage.value = '找不到麥克風裝置';
+    } else {
+      errorMessage.value = '無法啟動錄音：' + err.message;
+    }
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  isRecording.value = false;
+}
+
+async function transcribeAudio(audioBlob) {
+  status.value = 'processing';
+  
+  try {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    
+    const response = await fetch('/api/asr/transcribe', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || '語音辨識失敗');
+    }
+    
+    const data = await response.json();
+    
+    if (data.text && data.text.trim()) {
+      // Set transcribed text to input
+      userInput.value = data.text.trim();
+      
+      // Show confidence indicator if low
+      if (data.confidence < 0.7) {
+        addMessage('system', `⚠️ 辨識信心度較低 (${Math.round(data.confidence * 100)}%)，請確認文字是否正確`);
+      }
+      
+      // Auto-send the message
+      await sendMessage();
+    } else {
+      errorMessage.value = '未能辨識到語音，請再試一次';
+    }
+    
+  } catch (err) {
+    console.error('Transcription error:', err);
+    errorMessage.value = err.message || '語音辨識失敗';
+  } finally {
+    status.value = 'listening';
   }
 }
 
@@ -409,6 +534,14 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  // Clean up recording resources
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  if (recordingStream) {
+    recordingStream.getTracks().forEach(track => track.stop());
+  }
+  
   // Clean up session if still active
   if (sessionId.value) {
     fetch(`/api/sessions/${sessionId.value}/end`, { method: 'POST' }).catch(() => {});
@@ -646,6 +779,30 @@ onUnmounted(() => {
   border-top-right-radius: 0.25rem;
 }
 
+.chat-message.system {
+  align-self: center;
+  max-width: 100%;
+}
+
+.chat-message.system .message-avatar {
+  display: none;
+}
+
+.chat-message.system .message-content {
+  background: rgba(245, 158, 11, 0.2);
+  border-radius: 0.5rem;
+  text-align: center;
+}
+
+.chat-message.system .message-text {
+  color: #fcd34d;
+  font-size: 0.85rem;
+}
+
+.chat-message.system .message-time {
+  display: none;
+}
+
 .message-text {
   margin: 0;
   color: #e5e7eb;
@@ -724,6 +881,37 @@ onUnmounted(() => {
 @keyframes recording {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
   50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+
+.recording-indicator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 1.5rem;
+}
+
+.recording-dot {
+  width: 10px;
+  height: 10px;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: pulse-dot 1s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.recording-text {
+  color: #fca5a5;
+  font-size: 0.9rem;
+  font-weight: 500;
 }
 
 .chat-input {

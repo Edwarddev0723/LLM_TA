@@ -10,6 +10,9 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        // Increase timeout for ASR transcription (Whisper needs time to process)
+        timeout: 120000, // 2 minutes
+        proxyTimeout: 120000,
       },
     },
   },
