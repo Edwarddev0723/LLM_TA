@@ -42,8 +42,28 @@ from backend.routers.practice import router as practice_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - create database tables on startup."""
+    import threading
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
     # Create all tables
     Base.metadata.create_all(bind=engine)
+    
+    # Start ASR model warmup in background thread
+    def warmup_asr():
+        try:
+            from backend.routers.asr import get_asr_module
+            logger.info("Starting ASR model warmup in background...")
+            get_asr_module()
+            logger.info("ASR model warmup completed")
+        except Exception as e:
+            logger.warning(f"ASR warmup failed (will retry on first request): {e}")
+    
+    # Run warmup in background thread to not block startup
+    warmup_thread = threading.Thread(target=warmup_asr, daemon=True)
+    warmup_thread.start()
+    
     yield
     # Cleanup (if needed)
 

@@ -27,4 +27,5 @@ echo "📚 API docs available at http://localhost:8000/docs"
 echo "💚 Health check: http://localhost:8000/api/health"
 echo ""
 
-PYTHONPATH=.. uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Use longer timeout for ASR processing
+PYTHONPATH=.. uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --timeout-keep-alive 180

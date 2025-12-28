@@ -74,11 +74,11 @@ class ASRConfig:
     # 繁體中文優化參數
     initial_prompt: str = "以下是繁體中文數學教學對話。"  # 引導模型輸出繁體中文
     temperature: float = 0.0  # 降低隨機性，提高準確度
-    beam_size: int = 5  # 增加 beam search 寬度
-    best_of: int = 5  # 生成多個候選並選最佳
-    condition_on_previous_text: bool = True  # 利用上下文提升準確度
-    # LLM 後處理設定
-    use_llm_correction: bool = True  # 是否使用 LLM 修正
+    beam_size: int = 3  # 降低 beam search 寬度以加速（原本 5）
+    best_of: int = 3  # 降低候選數量以加速（原本 5）
+    condition_on_previous_text: bool = False  # 禁用以加速處理
+    # LLM 後處理設定 - 暫時禁用以測試性能
+    use_llm_correction: bool = False  # 是否使用 LLM 修正（暫時禁用）
     llm_model: str = "gemma3:4b"  # LLM 模型名稱
     llm_base_url: str = "http://localhost:11434"  # Ollama API URL
 
@@ -795,7 +795,7 @@ class ASRModule:
             self.load_model()
         
         try:
-            # 使用優化參數進行轉錄
+            # 使用優化參數進行轉錄（優化速度）
             result = self._model.transcribe(
                 audio_path,
                 language=language or self.config.language,
@@ -807,8 +807,8 @@ class ASRModule:
                 beam_size=self.config.beam_size,
                 best_of=self.config.best_of,
                 condition_on_previous_text=self.config.condition_on_previous_text,
-                # 啟用 word timestamps
-                word_timestamps=True,
+                # 禁用 word timestamps 以加速處理
+                word_timestamps=False,
             )
             
             # Extract word timestamps if available

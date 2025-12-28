@@ -77,16 +77,20 @@
           <div class="chat-input-area">
             <button 
               class="voice-btn" 
-              :class="{ active: isRecording }"
+              :class="{ active: isRecording, loading: asrLoading && !asrReady }"
               @click="toggleRecording"
-              :disabled="!sessionId || status === 'processing'"
-              :title="isRecording ? '點擊停止錄音' : '點擊開始錄音'"
+              :disabled="!sessionId || status === 'processing' || (asrLoading && !asrReady)"
+              :title="asrLoading && !asrReady ? 'ASR 模型載入中...' : (isRecording ? '點擊停止錄音' : '點擊開始錄音')"
             >
-              {{ isRecording ? '⏹️' : '🎙️' }}
+              <span v-if="asrLoading && !asrReady" class="loading-spinner">⏳</span>
+              <span v-else>{{ isRecording ? '⏹️' : '🎙️' }}</span>
             </button>
             <div v-if="isRecording" class="recording-indicator">
               <span class="recording-dot"></span>
               <span class="recording-text">錄音中...</span>
+            </div>
+            <div v-else-if="asrLoading && !asrReady" class="asr-loading-indicator">
+              <span class="loading-text">語音辨識載入中...</span>
             </div>
             <input 
               v-else
@@ -161,6 +165,10 @@ const fsmState = ref('IDLE');
 const conceptCoverage = ref(0);
 const isLoading = ref(false);
 const errorMessage = ref('');
+
+// ASR state
+const asrReady = ref(false);
+const asrLoading = ref(false);
 
 // UI state
 const status = ref('listening'); // listening | processing | speaking
@@ -458,22 +466,92 @@ function stopRecording() {
 
 async function transcribeAudio(audioBlob) {
   status.value = 'processing';
+  addMessage('system', '🎤 正在處理語音...');
   
   try {
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.webm');
     
-    const response = await fetch('/api/asr/transcribe', {
-      method: 'POST',
-      body: formData
-    });
+    // Use AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      addMessage('system', '⏱️ 語音處理超時，請重試');
+    }, 120000); // 120 second timeout
     
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '語音辨識失敗');
+    let response;
+    try {
+      response = await fetch('/api/asr/transcribe', {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal
+      });
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError.name === 'AbortError') {
+        throw new Error('語音辨識超時，請縮短錄音長度後重試');
+      }
+      // Check if it's a network error (socket hang up)
+      if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('NetworkError')) {
+        throw new Error('網路連接中斷，請確認後端服務正常運行');
+      }
+      throw fetchError;
+    }
+    clearTimeout(timeoutId);
+    
+    // Check if response has content
+    const contentType = response.headers.get('content-type');
+    let responseText = '';
+    
+    try {
+      responseText = await response.text();
+    } catch (textError) {
+      console.error('Failed to read response text:', textError);
+      throw new Error('伺服器響應異常，請重試');
     }
     
-    const data = await response.json();
+    if (!response.ok) {
+      // Try to parse error message
+      let errorMsg = '語音辨識失敗';
+      if (responseText) {
+        try {
+          const errorData = JSON.parse(responseText);
+          errorMsg = errorData.detail || errorMsg;
+        } catch {
+          errorMsg = responseText || errorMsg;
+        }
+      }
+      
+      // Check for specific error codes
+      if (response.status === 503) {
+        errorMsg = 'ASR 服務尚未準備好，請稍後再試';
+        // Trigger warmup again
+        warmupAsr();
+      } else if (response.status === 504 || response.status === 502) {
+        errorMsg = '處理超時，請縮短錄音長度後重試';
+      }
+      
+      throw new Error(errorMsg);
+    }
+    
+    // Parse successful response
+    if (!responseText) {
+      throw new Error('伺服器返回空響應，請重試');
+    }
+    
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (e) {
+      console.error('Failed to parse ASR response:', responseText);
+      throw new Error('無法解析伺服器響應，請重試');
+    }
+    
+    // Remove processing message
+    const processingIdx = chatMessages.value.findIndex(m => m.text === '🎤 正在處理語音...');
+    if (processingIdx !== -1) {
+      chatMessages.value.splice(processingIdx, 1);
+    }
     
     if (data.text && data.text.trim()) {
       // Set transcribed text to input
@@ -493,6 +571,12 @@ async function transcribeAudio(audioBlob) {
   } catch (err) {
     console.error('Transcription error:', err);
     errorMessage.value = err.message || '語音辨識失敗';
+    
+    // Remove processing message on error
+    const processingIdx = chatMessages.value.findIndex(m => m.text === '🎤 正在處理語音...');
+    if (processingIdx !== -1) {
+      chatMessages.value.splice(processingIdx, 1);
+    }
   } finally {
     status.value = 'listening';
   }
@@ -523,6 +607,70 @@ const exitTeaching = async () => {
   router.push({ name: 'student-dashboard' });
 };
 
+// ASR warmup and status check
+async function checkAsrStatus() {
+  try {
+    const response = await fetch('/api/asr/status');
+    if (response.ok) {
+      const data = await response.json();
+      asrReady.value = data.ready;
+      asrLoading.value = data.loading;
+      if (data.error) {
+        console.warn('ASR error:', data.error);
+      }
+      return data;
+    }
+  } catch (err) {
+    console.error('Failed to check ASR status:', err);
+  }
+  return null;
+}
+
+async function warmupAsr() {
+  try {
+    const status = await checkAsrStatus();
+    if (status?.ready) {
+      asrReady.value = true;
+      return;
+    }
+    
+    // Start warmup
+    asrLoading.value = true;
+    const response = await fetch('/api/asr/warmup', { method: 'POST' });
+    if (response.ok) {
+      const data = await response.json();
+      console.log('ASR warmup:', data.message);
+      
+      // Poll for status until ready
+      const pollInterval = setInterval(async () => {
+        const status = await checkAsrStatus();
+        if (status?.ready) {
+          asrReady.value = true;
+          asrLoading.value = false;
+          clearInterval(pollInterval);
+          addMessage('system', '🎤 語音辨識已準備就緒');
+        } else if (!status?.loading && status?.error) {
+          asrLoading.value = false;
+          clearInterval(pollInterval);
+          console.error('ASR warmup failed:', status.error);
+        }
+      }, 3000); // Check every 3 seconds
+      
+      // Stop polling after 3 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (!asrReady.value) {
+          asrLoading.value = false;
+          console.warn('ASR warmup timeout');
+        }
+      }, 180000);
+    }
+  } catch (err) {
+    console.error('Failed to warmup ASR:', err);
+    asrLoading.value = false;
+  }
+}
+
 onMounted(() => {
   // Load problem from route params if available
   if (route.query.questionId) {
@@ -531,6 +679,9 @@ onMounted(() => {
   if (route.query.questionText) {
     currentProblem.value.text = route.query.questionText;
   }
+  
+  // Start ASR warmup in background
+  warmupAsr();
 });
 
 onUnmounted(() => {
@@ -877,6 +1028,18 @@ onUnmounted(() => {
   background: rgba(239, 68, 68, 0.3);
   animation: recording 1s infinite;
 }
+.voice-btn.loading {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.loading-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 @keyframes recording {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
@@ -893,6 +1056,23 @@ onUnmounted(() => {
   background: rgba(239, 68, 68, 0.15);
   border: 1px solid rgba(239, 68, 68, 0.3);
   border-radius: 1.5rem;
+}
+
+.asr-loading-indicator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 1.5rem;
+}
+
+.loading-text {
+  color: #fcd34d;
+  font-size: 0.85rem;
 }
 
 .recording-dot {

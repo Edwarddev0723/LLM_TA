@@ -11,8 +11,18 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         // Increase timeout for ASR transcription (Whisper needs time to process)
-        timeout: 120000, // 2 minutes
-        proxyTimeout: 120000,
+        timeout: 180000, // 3 minutes
+        proxyTimeout: 180000,
+        // Keep connection alive
+        configure: (proxy, options) => {
+          proxy.on('error', (err, req, res) => {
+            console.log('Proxy error:', err.message);
+          });
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            // Set longer timeout on the request
+            proxyReq.setTimeout(180000);
+          });
+        },
       },
     },
   },
