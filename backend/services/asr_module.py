@@ -77,9 +77,9 @@ class ASRConfig:
     beam_size: int = 3  # 降低 beam search 寬度以加速（原本 5）
     best_of: int = 3  # 降低候選數量以加速（原本 5）
     condition_on_previous_text: bool = False  # 禁用以加速處理
-    # LLM 後處理設定 - 暫時禁用以測試性能
-    use_llm_correction: bool = False  # 是否使用 LLM 修正（暫時禁用）
-    llm_model: str = "gemma3:4b"  # LLM 模型名稱
+    # LLM 後處理設定
+    use_llm_correction: bool = True  # 啟用 LLM 修正（在最後階段）
+    llm_model: str = "gemma3:8b"  # LLM 模型名稱
     llm_base_url: str = "http://localhost:11434"  # Ollama API URL
 
 
@@ -1087,7 +1087,8 @@ class ASRModule:
     def llm_correct_transcription(
         text: str,
         model: str = "gemma3:4b",
-        base_url: str = "http://localhost:11434"
+        base_url: str = "http://localhost:11434",
+        question_context: str = ""
     ) -> str:
         """
         Use LLM to correct and improve ASR transcription.
@@ -1096,6 +1097,7 @@ class ASRModule:
             text: Raw transcribed text from Whisper.
             model: Ollama model name for correction.
             base_url: Ollama API base URL.
+            question_context: The current question content for context.
         
         Returns:
             Corrected text with improved accuracy.
@@ -1108,10 +1110,25 @@ class ASRModule:
         if not text or not text.strip():
             return text
         
-        # Prompt for ASR correction - focused on math education context
-        prompt = f"""修正語音辨識錯誤，簡體轉繁體。保持數字為阿拉伯數字(1,2,3...)，不要改成中文數字。
+        # Build context-aware prompt
+        context_section = ""
+        if question_context:
+            context_section = f"\n題目：{question_context}\n"
+        
+        # Improved prompt for ASR correction with question context
+        prompt = f"""你是語音辨識後處理助手。請修正以下語音辨識文字中的錯誤。
+{context_section}
+規則：
+1. 只輸出修正後的文字，不要加任何解釋、標點或額外內容
+2. 簡體中文轉繁體中文
+3. 保持阿拉伯數字（1,2,3），不要轉成中文數字
+4. 修正同音字錯誤（如「是」和「式」、「加」和「家」）
+5. 保持原文長度相近，不要刪減或添加內容
+6. 如果原文已經正確，直接輸出原文
+7. 根據題目上下文修正數學相關詞彙
 
-{text}"""
+輸入：{text}
+輸出："""
 
         try:
             response = requests.post(
@@ -1121,8 +1138,10 @@ class ASRModule:
                     "prompt": prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,  # Low temperature for consistent output
-                        "num_predict": 200,  # Limit output length
+                        "temperature": 0.0,  # Zero temperature for deterministic output
+                        "num_predict": len(text) * 3 + 50,  # Allow some room but not too much
+                        "top_p": 0.9,
+                        "repeat_penalty": 1.1,
                     }
                 },
                 timeout=30  # 30 second timeout
@@ -1132,20 +1151,45 @@ class ASRModule:
                 result = response.json()
                 corrected = result.get("response", "").strip()
                 
-                # Validate the correction - if it's too different or empty, use original
-                if corrected and len(corrected) > 0:
-                    # Remove any leading/trailing quotes or extra whitespace
-                    corrected = corrected.strip('"\'').strip()
-                    
-                # If LLM returned something reasonable, use it
-                    if len(corrected) >= len(text) * 0.5 and len(corrected) <= len(text) * 2:
-                        # Clean up: remove trailing punctuation that LLM might add
-                        corrected = corrected.rstrip('。，！？.!?,')
-                        logger.info(f"LLM correction: '{text}' -> '{corrected}'")
-                        return corrected
+                if not corrected:
+                    logger.warning("LLM returned empty response, using original")
+                    return text
                 
-                logger.warning(f"LLM correction rejected, using original: '{text}'")
-                return text
+                # Clean up the response
+                # Remove common LLM artifacts
+                corrected = corrected.strip('"\'「」『』')
+                corrected = corrected.strip()
+                
+                # Remove any prefix like "輸出：" or "修正後："
+                prefixes_to_remove = ["輸出：", "輸出:", "修正後：", "修正後:", "答：", "答:"]
+                for prefix in prefixes_to_remove:
+                    if corrected.startswith(prefix):
+                        corrected = corrected[len(prefix):].strip()
+                
+                # Remove trailing punctuation that LLM might add
+                corrected = corrected.rstrip('。，！？.!?,；;')
+                
+                # Validation: check if the correction is reasonable
+                # 1. Not too short (less than 30% of original)
+                if len(corrected) < len(text) * 0.3:
+                    logger.warning(f"LLM output too short ({len(corrected)} vs {len(text)}), using original")
+                    return text
+                
+                # 2. Not too long (more than 200% of original)
+                if len(corrected) > len(text) * 2:
+                    logger.warning(f"LLM output too long ({len(corrected)} vs {len(text)}), using original")
+                    return text
+                
+                # 3. Check if it contains explanation markers (LLM added unwanted content)
+                unwanted_markers = ["解釋", "說明", "注意", "備註", "原文", "修正", "→", "->", "：\n", ":\n"]
+                for marker in unwanted_markers:
+                    if marker in corrected:
+                        logger.warning(f"LLM added unwanted content (found '{marker}'), using original")
+                        return text
+                
+                # 4. If correction looks good, use it
+                logger.info(f"LLM correction: '{text}' -> '{corrected}'")
+                return corrected
             else:
                 logger.warning(f"LLM API error {response.status_code}, using original text")
                 return text
@@ -1196,7 +1240,8 @@ class ASRModule:
     def full_post_process_with_llm(
         text: str,
         model: str = "gemma3:4b",
-        base_url: str = "http://localhost:11434"
+        base_url: str = "http://localhost:11434",
+        question_context: str = ""
     ) -> str:
         """
         Apply all post-processing steps including LLM correction.
@@ -1210,6 +1255,7 @@ class ASRModule:
             text: Raw transcribed text from Whisper.
             model: Ollama model name for correction.
             base_url: Ollama API base URL.
+            question_context: The current question content for context.
         
         Returns:
             Fully processed and corrected text.
@@ -1218,7 +1264,7 @@ class ASRModule:
             return text
         
         # Step 1: LLM correction (handles typos and simplified->traditional)
-        corrected = ASRModule.llm_correct_transcription(text, model, base_url)
+        corrected = ASRModule.llm_correct_transcription(text, model, base_url, question_context)
         
         # Step 2: Math symbol conversion (oral -> symbols)
         result = ASRModule.post_process_math_symbols(corrected)

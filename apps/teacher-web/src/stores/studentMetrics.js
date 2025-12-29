@@ -61,6 +61,7 @@ export const useStudentMetricsStore = defineStore('studentMetrics', () => {
     error.value = null;
     
     try {
+      console.log('Fetching summary for student:', studentId);
       const response = await fetch(`/api/student/metrics/summary?student_id=${studentId}`);
       
       if (!response.ok) {
@@ -68,7 +69,9 @@ export const useStudentMetricsStore = defineStore('studentMetrics', () => {
         throw new Error(errData.detail || '無法載入指標摘要');
       }
       
-      summary.value = await response.json();
+      const data = await response.json();
+      console.log('Summary data received:', data);
+      summary.value = data;
       lastUpdated.value = new Date();
     } catch (err) {
       error.value = err.message;

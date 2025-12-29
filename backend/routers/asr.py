@@ -3,6 +3,7 @@ ASR (Automatic Speech Recognition) API routes for the AI Math Tutor system.
 
 Implements:
 - POST /api/asr/transcribe - Transcribe audio to text
+- POST /api/asr/transcribe-stream - Streaming transcription with SSE
 - GET /api/asr/status - Check ASR model status
 - POST /api/asr/warmup - Pre-load ASR model
 
@@ -13,9 +14,12 @@ import os
 import subprocess
 import logging
 import asyncio
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+import time
+import json
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, AsyncGenerator
 
 from backend.services.asr_module import (
     ASRModule,
@@ -183,17 +187,24 @@ async def warmup_asr(background_tasks: BackgroundTasks):
 
 
 @router.post("/transcribe", response_model=TranscriptionResponse)
-async def transcribe_audio(audio: UploadFile = File(...)):
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    question_context: Optional[str] = Form(default="")
+):
     """
     Transcribe audio file to text.
     
     Requirements: 5.1
     - Accepts audio file (webm, mp4, wav, etc.)
+    - Accepts optional question_context for better LLM correction
     - Returns transcribed text with confidence score
     """
     # Get content type - browsers may send various types
     content_type = audio.content_type or "application/octet-stream"
     filename = audio.filename or "recording"
+    
+    # Log request info
+    logger.info(f"ASR Request - filename: {filename}, content_type: {content_type}, context: {question_context[:50] if question_context else 'none'}...")
     
     # Log detailed request info
     logger.info(f"ASR Request - filename: {filename}, content_type: {content_type}")
@@ -236,24 +247,22 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                 language="zh"
             )
         
-        # Convert to WAV if not already WAV format
+        # Convert to WAV format for processing
         if suffix != ".wav":
             tmp_wav_path = tmp_input_path.replace(suffix, ".wav")
             if convert_to_wav(tmp_input_path, tmp_wav_path):
                 logger.info(f"Converted to WAV: {tmp_wav_path}")
                 transcribe_path = tmp_wav_path
             else:
-                # Try to transcribe original file directly
                 logger.warning("ffmpeg conversion failed, trying original file")
                 transcribe_path = tmp_input_path
         else:
             transcribe_path = tmp_input_path
         
-        # Get ASR module and transcribe
+        # Get ASR module
         asr = get_asr_module()
         
         logger.info("Starting Whisper transcription...")
-        import time
         start_time = time.time()
         
         try:
@@ -274,7 +283,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                 processed_text = ASRModule.full_post_process_with_llm(
                     result.text,
                     model=asr.config.llm_model,
-                    base_url=asr.config.llm_base_url
+                    base_url=asr.config.llm_base_url,
+                    question_context=question_context or ""
                 )
             except Exception as e:
                 logger.warning(f"LLM post-processing failed: {e}, using basic processing")
@@ -316,6 +326,181 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             os.unlink(tmp_input_path)
         if tmp_wav_path and os.path.exists(tmp_wav_path):
             os.unlink(tmp_wav_path)
+
+
+# ============== Streaming ASR Endpoint ==============
+
+class StreamingTranscriptionResponse(BaseModel):
+    """Response model for streaming transcription events."""
+    event: str  # "partial", "final", "error", "llm_processing"
+    text: str
+    confidence: float = 0.0
+    is_final: bool = False
+
+
+async def generate_streaming_transcription(
+    audio_path: str,
+    asr: ASRModule,
+    question_context: str = ""
+) -> AsyncGenerator[str, None]:
+    """
+    Generate streaming transcription events using SSE format.
+    
+    Flow:
+    1. Whisper transcribes in segments
+    2. Each segment is sent as a partial result
+    3. Final result is post-processed with LLM
+    """
+    try:
+        # Send start event
+        yield f"data: {json.dumps({'event': 'start', 'text': '', 'is_final': False})}\n\n"
+        await asyncio.sleep(0)  # Allow event to be sent
+        
+        # Transcribe with Whisper (run in thread pool to not block)
+        logger.info("Starting streaming transcription...")
+        start_time = time.time()
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, asr.transcribe, audio_path)
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Whisper completed in {elapsed:.2f}s: '{result.text}'")
+        
+        # Send raw transcription as partial
+        yield f"data: {json.dumps({'event': 'partial', 'text': result.text, 'confidence': result.confidence, 'is_final': False})}\n\n"
+        await asyncio.sleep(0)
+        
+        # Apply basic post-processing first (fast)
+        basic_processed = ASRModule.full_post_process(result.text)
+        
+        if basic_processed != result.text:
+            yield f"data: {json.dumps({'event': 'partial', 'text': basic_processed, 'confidence': result.confidence, 'is_final': False})}\n\n"
+            await asyncio.sleep(0)
+        
+        # Apply LLM correction if enabled
+        final_text = basic_processed
+        if asr.config.use_llm_correction and result.text.strip():
+            yield f"data: {json.dumps({'event': 'llm_processing', 'text': basic_processed, 'is_final': False})}\n\n"
+            await asyncio.sleep(0)
+            
+            try:
+                llm_start = time.time()
+                # Run LLM correction in thread pool with question context
+                import functools
+                llm_func = functools.partial(
+                    ASRModule.full_post_process_with_llm,
+                    result.text,
+                    asr.config.llm_model,
+                    asr.config.llm_base_url,
+                    question_context
+                )
+                final_text = await loop.run_in_executor(None, llm_func)
+                llm_elapsed = time.time() - llm_start
+                logger.info(f"LLM correction completed in {llm_elapsed:.2f}s: '{final_text}'")
+            except Exception as e:
+                logger.warning(f"LLM correction failed: {e}")
+                final_text = basic_processed
+        
+        # Send final result
+        yield f"data: {json.dumps({'event': 'final', 'text': final_text, 'confidence': result.confidence, 'is_final': True})}\n\n"
+        
+    except Exception as e:
+        logger.error(f"Streaming transcription error: {e}")
+        yield f"data: {json.dumps({'event': 'error', 'text': str(e), 'is_final': True})}\n\n"
+
+
+@router.post("/transcribe-stream")
+async def transcribe_audio_stream(
+    audio: UploadFile = File(...),
+    question_context: Optional[str] = Form(default="")
+):
+    """
+    Streaming transcription with Server-Sent Events (SSE).
+    
+    Returns partial results as they become available, then final LLM-corrected result.
+    
+    Events:
+    - start: Transcription started
+    - partial: Intermediate result (before LLM)
+    - llm_processing: LLM correction in progress
+    - final: Final corrected result
+    - error: Error occurred
+    """
+    content_type = audio.content_type or "application/octet-stream"
+    filename = audio.filename or "recording"
+    
+    # Determine file extension
+    if "webm" in content_type or "webm" in filename.lower():
+        suffix = ".webm"
+    elif "mp4" in content_type or "m4a" in content_type:
+        suffix = ".mp4"
+    elif "ogg" in content_type:
+        suffix = ".ogg"
+    elif "wav" in content_type:
+        suffix = ".wav"
+    else:
+        suffix = ".webm"
+    
+    tmp_input_path = None
+    tmp_wav_path = None
+    
+    try:
+        # Save uploaded file
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+            content = await audio.read()
+            tmp_file.write(content)
+            tmp_input_path = tmp_file.name
+        
+        if len(content) < 100:
+            async def empty_response():
+                yield f"data: {json.dumps({'event': 'final', 'text': '', 'confidence': 0.0, 'is_final': True})}\n\n"
+            return StreamingResponse(empty_response(), media_type="text/event-stream")
+        
+        # Convert to WAV
+        if suffix != ".wav":
+            tmp_wav_path = tmp_input_path.replace(suffix, ".wav")
+            if not convert_to_wav(tmp_input_path, tmp_wav_path):
+                tmp_wav_path = None
+        
+        transcribe_path = tmp_wav_path or tmp_input_path
+        
+        # Get ASR module
+        asr = get_asr_module()
+        
+        # Create cleanup function
+        async def cleanup_and_stream():
+            try:
+                async for event in generate_streaming_transcription(transcribe_path, asr, question_context or ""):
+                    yield event
+            finally:
+                # Cleanup temp files
+                for path in [tmp_input_path, tmp_wav_path]:
+                    if path and os.path.exists(path):
+                        try:
+                            os.unlink(path)
+                        except:
+                            pass
+        
+        return StreamingResponse(
+            cleanup_and_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+        
+    except Exception as e:
+        # Cleanup on error
+        for path in [tmp_input_path, tmp_wav_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+        
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/convert-symbols", response_model=MathSymbolResponse)

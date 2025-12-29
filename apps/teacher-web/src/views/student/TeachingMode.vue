@@ -1,5 +1,50 @@
 <template>
   <div class="teaching-root">
+    <!-- Question Selection Modal -->
+    <div v-if="showQuestionModal" class="modal-overlay" @click.self="showQuestionModal = false">
+      <div class="question-modal">
+        <div class="modal-header">
+          <h2>選擇題目</h2>
+          <button class="close-btn" @click="showQuestionModal = false">✕</button>
+        </div>
+        <div class="modal-filters">
+          <select v-model="questionFilter.subject" class="filter-select">
+            <option value="">全部科目</option>
+            <option value="代數">代數</option>
+            <option value="幾何">幾何</option>
+            <option value="統計">統計</option>
+          </select>
+          <select v-model="questionFilter.difficulty" class="filter-select">
+            <option value="">全部難度</option>
+            <option value="基礎">基礎</option>
+            <option value="中等">中等</option>
+            <option value="進階">進階</option>
+          </select>
+        </div>
+        <div class="question-list" v-if="!questionsLoading">
+          <div 
+            v-for="q in filteredQuestions" 
+            :key="q.id" 
+            class="question-item"
+            :class="{ selected: currentProblem.id === q.id }"
+            @click="selectQuestion(q)"
+          >
+            <div class="question-text">{{ q.content || q.text }}</div>
+            <div class="question-meta">
+              <span class="tag subject">{{ q.subject || '數學' }}</span>
+              <span class="tag difficulty" :class="q.difficulty?.toLowerCase()">{{ q.difficulty || '基礎' }}</span>
+            </div>
+          </div>
+          <div v-if="filteredQuestions.length === 0" class="no-questions">
+            暫無題目
+          </div>
+        </div>
+        <div v-else class="loading-questions">
+          載入題目中...
+        </div>
+      </div>
+    </div>
+
     <!-- Global Header with FSM State -->
     <header class="teaching-header">
       <div class="header-left">
@@ -26,6 +71,14 @@
           <div class="section-header">
             <span class="section-icon">📝</span>
             <span class="section-title">題目</span>
+            <button 
+              class="select-question-btn" 
+              @click="openQuestionModal"
+              :disabled="!!sessionId"
+              :title="sessionId ? '請先結束當前講題' : '選擇題目'"
+            >
+              📋 選擇題目
+            </button>
           </div>
           <div class="problem-content">
             <div class="problem-text">
@@ -58,7 +111,8 @@
                 {{ msg.role === 'ai' ? '🤖' : '👤' }}
               </div>
               <div class="message-content">
-                <p class="message-text">{{ msg.text }}</p>
+                <div v-if="msg.role === 'ai'" class="message-text markdown-content" v-html="renderMarkdown(msg.text)"></div>
+                <p v-else class="message-text">{{ msg.text }}</p>
                 <span class="message-time">{{ msg.time }}</span>
                 <span class="message-type" v-if="msg.responseType">{{ msg.responseType }}</span>
               </div>
@@ -155,9 +209,55 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import WhiteboardCanvas from '@/components/teaching/WhiteboardCanvas.vue';
+import { marked } from 'marked';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 
 const router = useRouter();
 const route = useRoute();
+
+// Configure marked for math rendering
+const renderMath = (text) => {
+  if (!text) return '';
+  
+  // Replace LaTeX display math \[...\] or $$...$$ with rendered KaTeX
+  let result = text.replace(/\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$/g, (match, p1, p2) => {
+    const math = p1 || p2;
+    try {
+      return katex.renderToString(math.trim(), { displayMode: true, throwOnError: false });
+    } catch (e) {
+      return match;
+    }
+  });
+  
+  // Replace inline math \(...\) or $...$ with rendered KaTeX
+  result = result.replace(/\\\(([\s\S]*?)\\\)|\$([^\$\n]+?)\$/g, (match, p1, p2) => {
+    const math = p1 || p2;
+    try {
+      return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false });
+    } catch (e) {
+      return match;
+    }
+  });
+  
+  return result;
+};
+
+// Render markdown with math support
+const renderMarkdown = (text) => {
+  if (!text) return '';
+  
+  // First render math expressions
+  const withMath = renderMath(text);
+  
+  // Then render markdown
+  const html = marked.parse(withMath, {
+    breaks: true,
+    gfm: true
+  });
+  
+  return html;
+};
 
 // Session state
 const sessionId = ref(null);
@@ -165,6 +265,15 @@ const fsmState = ref('IDLE');
 const conceptCoverage = ref(0);
 const isLoading = ref(false);
 const errorMessage = ref('');
+
+// Question selection state
+const showQuestionModal = ref(false);
+const questions = ref([]);
+const questionsLoading = ref(false);
+const questionFilter = ref({
+  subject: '',
+  difficulty: ''
+});
 
 // ASR state
 const asrReady = ref(false);
@@ -205,9 +314,22 @@ const statusLabels = {
 // Current problem data
 const currentProblem = ref({
   id: '',
-  text: '解方程式：2x + 5 = 13，求 x 的值。',
-  subject: '數學',
-  difficulty: '基礎'
+  text: '請選擇一道題目開始講題',
+  subject: '',
+  difficulty: ''
+});
+
+// Filtered questions based on filters
+const filteredQuestions = computed(() => {
+  return questions.value.filter(q => {
+    if (questionFilter.value.subject && q.subject !== questionFilter.value.subject) {
+      return false;
+    }
+    if (questionFilter.value.difficulty && q.difficulty !== questionFilter.value.difficulty) {
+      return false;
+    }
+    return true;
+  });
 });
 
 // Chat messages
@@ -471,98 +593,101 @@ async function transcribeAudio(audioBlob) {
   try {
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.webm');
+    // Add question context for better LLM correction
+    formData.append('question_context', currentProblem.value.text || '');
     
-    // Use AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-      addMessage('system', '⏱️ 語音處理超時，請重試');
-    }, 120000); // 120 second timeout
-    
-    let response;
-    try {
-      response = await fetch('/api/asr/transcribe', {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal
-      });
-    } catch (fetchError) {
-      clearTimeout(timeoutId);
-      if (fetchError.name === 'AbortError') {
-        throw new Error('語音辨識超時，請縮短錄音長度後重試');
-      }
-      // Check if it's a network error (socket hang up)
-      if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('NetworkError')) {
-        throw new Error('網路連接中斷，請確認後端服務正常運行');
-      }
-      throw fetchError;
-    }
-    clearTimeout(timeoutId);
-    
-    // Check if response has content
-    const contentType = response.headers.get('content-type');
-    let responseText = '';
-    
-    try {
-      responseText = await response.text();
-    } catch (textError) {
-      console.error('Failed to read response text:', textError);
-      throw new Error('伺服器響應異常，請重試');
-    }
+    // Use streaming endpoint for better UX
+    const response = await fetch('/api/asr/transcribe-stream', {
+      method: 'POST',
+      body: formData
+    });
     
     if (!response.ok) {
-      // Try to parse error message
+      const errorText = await response.text();
       let errorMsg = '語音辨識失敗';
-      if (responseText) {
-        try {
-          const errorData = JSON.parse(responseText);
-          errorMsg = errorData.detail || errorMsg;
-        } catch {
-          errorMsg = responseText || errorMsg;
-        }
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMsg = errorData.detail || errorMsg;
+      } catch {
+        errorMsg = errorText || errorMsg;
       }
-      
-      // Check for specific error codes
-      if (response.status === 503) {
-        errorMsg = 'ASR 服務尚未準備好，請稍後再試';
-        // Trigger warmup again
-        warmupAsr();
-      } else if (response.status === 504 || response.status === 502) {
-        errorMsg = '處理超時，請縮短錄音長度後重試';
-      }
-      
       throw new Error(errorMsg);
     }
     
-    // Parse successful response
-    if (!responseText) {
-      throw new Error('伺服器返回空響應，請重試');
-    }
+    // Process SSE stream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let partialText = '';
+    let finalText = '';
+    let confidence = 0;
     
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (e) {
-      console.error('Failed to parse ASR response:', responseText);
-      throw new Error('無法解析伺服器響應，請重試');
+    // Update processing message to show partial results
+    const updateProcessingMessage = (text, stage) => {
+      const processingIdx = chatMessages.value.findIndex(m => m.text.startsWith('🎤'));
+      if (processingIdx !== -1) {
+        if (stage === 'llm') {
+          chatMessages.value[processingIdx].text = `🔄 AI 優化中: "${text}"`;
+        } else if (text) {
+          chatMessages.value[processingIdx].text = `🎤 辨識中: "${text}"`;
+        }
+      }
+    };
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            
+            switch (data.event) {
+              case 'start':
+                // Transcription started
+                break;
+              case 'partial':
+                partialText = data.text;
+                confidence = data.confidence || 0;
+                updateProcessingMessage(partialText, 'partial');
+                break;
+              case 'llm_processing':
+                updateProcessingMessage(partialText, 'llm');
+                break;
+              case 'final':
+                finalText = data.text;
+                confidence = data.confidence || 0;
+                break;
+              case 'error':
+                throw new Error(data.text || '語音辨識失敗');
+            }
+          } catch (parseError) {
+            if (parseError.message !== '語音辨識失敗') {
+              console.warn('Failed to parse SSE event:', line);
+            } else {
+              throw parseError;
+            }
+          }
+        }
+      }
     }
     
     // Remove processing message
-    const processingIdx = chatMessages.value.findIndex(m => m.text === '🎤 正在處理語音...');
+    const processingIdx = chatMessages.value.findIndex(m => m.text.startsWith('🎤') || m.text.startsWith('🔄'));
     if (processingIdx !== -1) {
       chatMessages.value.splice(processingIdx, 1);
     }
     
-    if (data.text && data.text.trim()) {
-      // Set transcribed text to input
-      userInput.value = data.text.trim();
+    if (finalText && finalText.trim()) {
+      userInput.value = finalText.trim();
       
-      // Show confidence indicator if low
-      if (data.confidence < 0.7) {
-        addMessage('system', `⚠️ 辨識信心度較低 (${Math.round(data.confidence * 100)}%)，請確認文字是否正確`);
+      if (confidence < 0.7) {
+        addMessage('system', `⚠️ 辨識信心度較低 (${Math.round(confidence * 100)}%)，請確認文字是否正確`);
       }
       
-      // Auto-send the message
       await sendMessage();
     } else {
       errorMessage.value = '未能辨識到語音，請再試一次';
@@ -573,7 +698,7 @@ async function transcribeAudio(audioBlob) {
     errorMessage.value = err.message || '語音辨識失敗';
     
     // Remove processing message on error
-    const processingIdx = chatMessages.value.findIndex(m => m.text === '🎤 正在處理語音...');
+    const processingIdx = chatMessages.value.findIndex(m => m.text.startsWith('🎤') || m.text.startsWith('🔄'));
     if (processingIdx !== -1) {
       chatMessages.value.splice(processingIdx, 1);
     }
@@ -606,6 +731,79 @@ const exitTeaching = async () => {
   }
   router.push({ name: 'student-dashboard' });
 };
+
+// Question selection methods
+async function loadQuestions() {
+  questionsLoading.value = true;
+  try {
+    const response = await fetch('/api/questions');
+    if (response.ok) {
+      const data = await response.json();
+      // Map API response to frontend format
+      const difficultyMap = { 1: '基礎', 2: '中等', 3: '進階' };
+      const subjectMap = { '代數': '代數', '幾何': '幾何', '統計': '統計' };
+      
+      const apiQuestions = data.questions || data || [];
+      questions.value = apiQuestions.map(q => ({
+        id: q.id,
+        content: q.content,
+        subject: q.unit || q.subject || '數學',  // Use unit as subject for display
+        difficulty: difficultyMap[q.difficulty] || '基礎'
+      }));
+      
+      // If no questions from API, use fallback
+      if (questions.value.length === 0) {
+        questions.value = getDefaultQuestions();
+      }
+    } else {
+      // Fallback to sample questions if API fails
+      questions.value = getDefaultQuestions();
+    }
+  } catch (err) {
+    console.error('Failed to load questions:', err);
+    // Use sample questions on error
+    questions.value = getDefaultQuestions();
+  } finally {
+    questionsLoading.value = false;
+  }
+}
+
+function getDefaultQuestions() {
+  return [
+    { id: 'q-001', content: '解方程式：3x + 5 = 20', subject: '代數', difficulty: '基礎' },
+    { id: 'q-002', content: '解方程式：2(x - 3) = 10', subject: '代數', difficulty: '基礎' },
+    { id: 'q-003', content: '小明有一些糖果，給了弟弟 5 顆後，剩下的是原來的 2/3。請問小明原來有幾顆糖果？', subject: '代數', difficulty: '中等' },
+    { id: 'q-004', content: '解方程式：x² - 5x + 6 = 0', subject: '代數', difficulty: '中等' },
+    { id: 'q-005', content: '解方程式：x² + 4x - 5 = 0', subject: '代數', difficulty: '中等' },
+    { id: 'q-006', content: '使用公式解求解：2x² - 3x - 2 = 0', subject: '代數', difficulty: '進階' },
+    { id: 'q-007', content: '一個直角三角形的兩股分別為 3 公分和 4 公分，求斜邊長度。', subject: '幾何', difficulty: '基礎' },
+    { id: 'q-008', content: '一個圓的半徑為 7 公分，求圓的面積。（π 取 22/7）', subject: '幾何', difficulty: '基礎' },
+    { id: 'q-009', content: '三角形 ABC 中，∠A = 50°，∠B = 70°，求 ∠C。', subject: '幾何', difficulty: '基礎' },
+    { id: 'q-010', content: '求以下數據的平均數：12, 15, 18, 21, 24', subject: '統計', difficulty: '基礎' },
+    { id: 'q-011', content: '求以下數據的中位數：7, 3, 9, 5, 11, 2, 8', subject: '統計', difficulty: '基礎' },
+  ];
+}
+
+function openQuestionModal() {
+  if (sessionId.value) {
+    errorMessage.value = '請先結束當前講題再選擇新題目';
+    return;
+  }
+  showQuestionModal.value = true;
+  if (questions.value.length === 0) {
+    loadQuestions();
+  }
+}
+
+function selectQuestion(question) {
+  currentProblem.value = {
+    id: question.id,
+    text: question.content || question.text,
+    subject: question.subject || '數學',
+    difficulty: question.difficulty || '基礎'
+  };
+  showQuestionModal.value = false;
+}
 
 // ASR warmup and status check
 async function checkAsrStatus() {
@@ -962,6 +1160,97 @@ onUnmounted(() => {
   white-space: pre-wrap;
 }
 
+/* Markdown content styles */
+.markdown-content {
+  white-space: normal;
+}
+
+.markdown-content p {
+  margin: 0 0 0.5rem 0;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content strong {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.markdown-content em {
+  color: #a5b4fc;
+  font-style: italic;
+}
+
+.markdown-content ul, .markdown-content ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.markdown-content li {
+  margin: 0.25rem 0;
+}
+
+.markdown-content li::marker {
+  color: #60a5fa;
+}
+
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+  color: #f1f5f9;
+  margin: 0.75rem 0 0.5rem 0;
+  font-weight: 600;
+}
+
+.markdown-content h1 { font-size: 1.1rem; }
+.markdown-content h2 { font-size: 1rem; }
+.markdown-content h3 { font-size: 0.95rem; }
+
+.markdown-content code {
+  background: rgba(30, 41, 59, 0.8);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85rem;
+  color: #86efac;
+}
+
+.markdown-content pre {
+  background: rgba(15, 23, 42, 0.9);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-content blockquote {
+  border-left: 3px solid #60a5fa;
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  color: #94a3b8;
+}
+
+/* KaTeX math styles */
+.markdown-content .katex {
+  font-size: 1em;
+  color: #93c5fd;
+}
+
+.markdown-content .katex-display {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.markdown-content .katex-display > .katex {
+  text-align: left;
+}
+
 .message-time {
   display: inline-block;
   margin-top: 0.25rem;
@@ -1248,5 +1537,187 @@ onUnmounted(() => {
   .left-sidebar {
     max-height: 50vh;
   }
+}
+
+/* Question Selection Button */
+.select-question-btn {
+  margin-left: auto;
+  padding: 0.3rem 0.6rem;
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.select-question-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.select-question-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Question Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.question-modal {
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  background: #1e293b;
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #e5e7eb;
+}
+
+.close-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.modal-filters {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.filter-select {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 0.5rem;
+  color: #e5e7eb;
+  font-size: 0.85rem;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.question-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.question-item {
+  padding: 1rem;
+  margin: 0.5rem;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.question-item:hover {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.question-item.selected {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.question-text {
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.question-meta {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.question-meta .tag {
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+}
+
+.question-meta .tag.subject {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
+.question-meta .tag.difficulty {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
+.question-meta .tag.difficulty.中等 {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+
+.question-meta .tag.difficulty.進階 {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.no-questions, .loading-questions {
+  text-align: center;
+  padding: 2rem;
+  color: #94a3b8;
+  font-size: 0.9rem;
 }
 </style>

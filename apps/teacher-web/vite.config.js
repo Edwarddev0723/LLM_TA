@@ -4,6 +4,9 @@ import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   plugins: [vue()],
+  optimizeDeps: {
+    include: ['marked', 'katex']
+  },
   server: {
     port: 5173,
     proxy: {

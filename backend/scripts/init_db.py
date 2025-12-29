@@ -5,15 +5,21 @@
 import sys
 import os
 import hashlib
+import uuid
+import random
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from backend.models.database import Base, engine, SessionLocal
 from backend.models.knowledge import KnowledgeNode, KnowledgeRelation
 from backend.models.question import Question, Misconception, Hint
 from backend.models.user import User, UserRole, VerificationStatus
+from backend.models.student import Student
+from backend.models.session import Session, ConversationTurn
+from backend.models.metrics import LearningMetrics, Pause, HintUsage
+from backend.models.error_book import ErrorRecord
 
 
 def hash_password(password: str) -> str:
@@ -425,6 +431,147 @@ def create_sample_questions(db):
     print(f"✓ 建立 {len(hints)} 個提示")
 
 
+def create_sample_learning_data(db):
+    """建立範例學習數據（用於儀表板展示）"""
+    print("建立範例學習數據...")
+    
+    # 學生 ID（對應 student@test.com）
+    student_id = "student-001"
+    
+    # 先建立 Student 記錄（如果不存在）
+    existing_student = db.query(Student).filter_by(id=student_id).first()
+    if not existing_student:
+        student = Student(
+            id=student_id,
+            name="小明",
+            grade=8  # 國中二年級
+        )
+        db.add(student)
+        db.commit()
+        print(f"✓ 建立學生記錄: {student_id}")
+    
+    # 題目 ID 列表
+    question_ids = [
+        "q-linear-001", "q-linear-002", "q-linear-003",
+        "q-quadratic-001", "q-quadratic-002",
+        "q-geometry-001", "q-geometry-002", "q-geometry-003",
+        "q-stats-001", "q-stats-002"
+    ]
+    
+    # 單元對應
+    unit_map = {
+        "q-linear-001": "代數", "q-linear-002": "代數", "q-linear-003": "代數",
+        "q-quadratic-001": "代數", "q-quadratic-002": "代數",
+        "q-geometry-001": "幾何", "q-geometry-002": "幾何", "q-geometry-003": "幾何",
+        "q-stats-001": "統計", "q-stats-002": "統計"
+    }
+    
+    now = datetime.now()
+    sessions_created = 0
+    metrics_created = 0
+    errors_created = 0
+    hints_created = 0
+    
+    # 建立過去 14 天的學習記錄
+    for days_ago in range(14, -1, -1):
+        # 每天 1-3 個學習會話
+        sessions_per_day = random.randint(1, 3) if days_ago > 0 else 2
+        
+        for session_num in range(sessions_per_day):
+            session_date = now - timedelta(days=days_ago, hours=random.randint(9, 21))
+            session_id = f"session-demo-{days_ago:02d}-{session_num}"
+            
+            # 檢查是否已存在
+            existing = db.query(Session).filter_by(id=session_id).first()
+            if existing:
+                continue
+            
+            # 隨機選擇題目
+            question_id = random.choice(question_ids)
+            
+            # 計算會話時長（5-25 分鐘）
+            duration_minutes = random.randint(5, 25)
+            end_time = session_date + timedelta(minutes=duration_minutes)
+            
+            # 正確率（隨時間逐漸提升，模擬學習進步）
+            base_coverage = 0.5 + (14 - days_ago) * 0.03  # 從 50% 逐漸提升
+            coverage = min(0.95, base_coverage + random.uniform(-0.1, 0.15))
+            
+            # 建立會話
+            session = Session(
+                id=session_id,
+                student_id=student_id,
+                question_id=question_id,
+                start_time=session_date,
+                end_time=end_time,
+                final_state="CONSOLIDATING",
+                concept_coverage=coverage
+            )
+            db.add(session)
+            sessions_created += 1
+            
+            # 建立學習指標
+            wpm = random.randint(60, 120) + (14 - days_ago) * 2  # 語速逐漸提升
+            pause_rate = max(0.05, 0.25 - (14 - days_ago) * 0.01)  # 停頓比例逐漸降低
+            hint_dep = max(0.1, 0.5 - (14 - days_ago) * 0.025)  # 提示依賴度逐漸降低
+            focus_duration = duration_minutes * 60 * random.uniform(0.7, 0.95)  # 專注時長
+            
+            metrics = LearningMetrics(
+                id=f"metrics-{session_id}",
+                session_id=session_id,
+                wpm=wpm,
+                pause_rate=pause_rate,
+                hint_dependency=hint_dep,
+                concept_coverage=coverage,
+                focus_duration=focus_duration,
+                created_at=session_date
+            )
+            db.add(metrics)
+            metrics_created += 1
+            
+            # 隨機建立提示使用記錄
+            if random.random() < 0.6:  # 60% 機率使用提示
+                hint_count = random.randint(1, 3)
+                for h in range(hint_count):
+                    hint_usage = HintUsage(
+                        id=f"hint-usage-{session_id}-{h}",
+                        session_id=session_id,
+                        hint_level=h + 1,
+                        concept=unit_map.get(question_id, "代數"),
+                        timestamp=session_date + timedelta(minutes=random.randint(1, duration_minutes))
+                    )
+                    db.add(hint_usage)
+                    hints_created += 1
+            
+            # 隨機建立錯題記錄（正確率低時更容易出錯）
+            if random.random() > coverage:
+                error_types = ["CALCULATION", "CONCEPT", "CARELESS"]
+                error = ErrorRecord(
+                    id=f"error-{session_id}",
+                    student_id=student_id,
+                    question_id=question_id,
+                    session_id=session_id,
+                    student_answer="錯誤答案示例",
+                    correct_answer="正確答案示例",
+                    error_type=random.choice(error_types),
+                    concept=unit_map.get(question_id, "代數"),
+                    unit=unit_map.get(question_id, "代數"),
+                    timestamp=session_date,
+                    created_at=session_date,
+                    is_repaired=random.random() < 0.7,  # 70% 已修正
+                    repaired=random.random() < 0.7,
+                    recurrence_count=random.randint(0, 2) if random.random() < 0.3 else 0
+                )
+                db.add(error)
+                errors_created += 1
+    
+    db.commit()
+    print(f"✓ 建立 {sessions_created} 個學習會話")
+    print(f"✓ 建立 {metrics_created} 個學習指標")
+    print(f"✓ 建立 {hints_created} 個提示使用記錄")
+    print(f"✓ 建立 {errors_created} 個錯題記錄")
+
+
 def main():
     """主程式"""
     print("=" * 50)
@@ -440,6 +587,7 @@ def main():
         create_default_users(db)
         create_sample_knowledge_nodes(db)
         create_sample_questions(db)
+        create_sample_learning_data(db)  # 新增：建立學習數據
         print("=" * 50)
         print("✓ 資料庫初始化完成！")
         print("=" * 50)

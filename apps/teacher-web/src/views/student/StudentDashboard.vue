@@ -136,6 +136,12 @@
       </section>
 
       <!-- Secondary Stats -->
+      <!-- DEBUG: Remove this after testing -->
+      <div v-if="summary" style="background: #fef3c7; padding: 1rem; margin-bottom: 1rem; border-radius: 0.5rem; font-size: 0.8rem;">
+        <strong>DEBUG:</strong> total_sessions={{ summary.total_sessions }}, 
+        accuracy={{ summary.accuracy_rate?.value }}%,
+        wpm={{ summary.avg_wpm?.value }}
+      </div>
       <section class="stats-section">
         <div class="stats-grid">
           <div class="stat-card">
@@ -379,20 +385,18 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useStudentMetricsStore } from '@/stores/studentMetrics';
 import { useSessionStore } from '@/stores/session';
-import { storeToRefs } from 'pinia';
 
 const metricsStore = useStudentMetricsStore();
 const sessionStore = useSessionStore();
 
-const { 
-  isLoading, 
-  error: storeError, 
-  lastUpdated,
-  summary, 
-  trends, 
-  errorAnalysis,
-  recentSessions 
-} = storeToRefs(metricsStore);
+// Use computed to access store state reactively
+const isLoading = computed(() => metricsStore.isLoading);
+const storeError = computed(() => metricsStore.error);
+const lastUpdated = computed(() => metricsStore.lastUpdated);
+const summary = computed(() => metricsStore.summary);
+const trends = computed(() => metricsStore.trends);
+const errorAnalysis = computed(() => metricsStore.errorAnalysis);
+const recentSessions = computed(() => metricsStore.recentSessions);
 
 const apiError = ref(null);
 const trendPeriod = ref('week');
@@ -406,8 +410,18 @@ const tooltip = ref({
 });
 
 // Get student ID from session or use default
+// For demo purposes, map logged-in student email to student-001
 const studentId = computed(() => {
-  return sessionStore.user?.id || 'student-001';
+  const user = sessionStore.user;
+  if (user) {
+    // If user logged in via Login.vue, map to student-001 for demo data
+    if (user.email === 'student@test.com' || user.id === 'student-001') {
+      return 'student-001';
+    }
+    // For other students, use their ID
+    return user.id?.toString() || 'student-001';
+  }
+  return 'student-001';
 });
 
 // Watch for store errors
@@ -419,12 +433,18 @@ watch(storeError, (newError) => {
 
 // Fetch data on mount
 onMounted(async () => {
+  console.log('StudentDashboard mounted, studentId:', studentId.value);
+  console.log('Session user:', sessionStore.user);
   await refreshData();
 });
 
 async function refreshData() {
+  console.log('Refreshing data for student:', studentId.value);
   apiError.value = null;
   await metricsStore.fetchAllData(studentId.value);
+  console.log('Data fetched, summary:', summary.value);
+  console.log('Store summary:', metricsStore.summary);
+  console.log('Total sessions:', summary.value?.total_sessions);
 }
 
 async function changePeriod(period) {

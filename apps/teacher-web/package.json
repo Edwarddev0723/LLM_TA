@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "fabric": "^7.0.0",
+    "katex": "^0.16.9",
+    "marked": "^12.0.0",
     "pinia": "^2.2.0",
     "primeicons": "^7.0.0",
     "primevue": "^4.1.0",
