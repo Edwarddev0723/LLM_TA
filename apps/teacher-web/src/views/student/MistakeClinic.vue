@@ -2,7 +2,7 @@
   <div class="mistake-clinic-page">
     <header class="page-header">
       <div>
-        <h1>錯題診所 (FR1.4)</h1>
+        <h1>錯題診所</h1>
         <p>自動蒐集的錯題，可一鍵加入個人錯題本並重播學習過程</p>
       </div>
     </header>

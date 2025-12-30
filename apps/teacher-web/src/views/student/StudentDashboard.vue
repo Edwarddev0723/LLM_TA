@@ -136,12 +136,6 @@
       </section>
 
       <!-- Secondary Stats -->
-      <!-- DEBUG: Remove this after testing -->
-      <div v-if="summary" style="background: #fef3c7; padding: 1rem; margin-bottom: 1rem; border-radius: 0.5rem; font-size: 0.8rem;">
-        <strong>DEBUG:</strong> total_sessions={{ summary.total_sessions }}, 
-        accuracy={{ summary.accuracy_rate?.value }}%,
-        wpm={{ summary.avg_wpm?.value }}
-      </div>
       <section class="stats-section">
         <div class="stats-grid">
           <div class="stat-card">
@@ -412,15 +406,23 @@ const tooltip = ref({
 // Get student ID from session or use default
 // For demo purposes, map logged-in student email to student-001
 const studentId = computed(() => {
+  // TEMPORARY: Force use student-001 for testing
+  return 'student-001';
+  
   const user = sessionStore.user;
+  console.log('Computing studentId, user:', user);
+  
   if (user) {
     // If user logged in via Login.vue, map to student-001 for demo data
     if (user.email === 'student@test.com' || user.id === 'student-001') {
+      console.log('Mapping to student-001 (test account)');
       return 'student-001';
     }
     // For other students, use their ID
+    console.log('Using user ID:', user.id);
     return user.id?.toString() || 'student-001';
   }
+  console.log('No user, defaulting to student-001');
   return 'student-001';
 });
 
@@ -440,7 +442,20 @@ onMounted(async () => {
 
 async function refreshData() {
   console.log('Refreshing data for student:', studentId.value);
+  console.log('Session user:', sessionStore.user);
+  console.log('User ID:', sessionStore.user?.id);
+  console.log('User email:', sessionStore.user?.email);
   apiError.value = null;
+  
+  // Test direct API call
+  try {
+    const testResponse = await fetch(`/api/student/metrics/summary?student_id=${studentId.value}`);
+    const testData = await testResponse.json();
+    console.log('Direct API test:', testData);
+  } catch (err) {
+    console.error('Direct API test failed:', err);
+  }
+  
   await metricsStore.fetchAllData(studentId.value);
   console.log('Data fetched, summary:', summary.value);
   console.log('Store summary:', metricsStore.summary);

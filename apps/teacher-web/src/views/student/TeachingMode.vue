@@ -202,6 +202,15 @@
     <div v-if="errorMessage" class="error-toast" @click="errorMessage = ''">
       {{ errorMessage }}
     </div>
+
+    <!-- Stress Alert Notification -->
+    <transition name="stress-alert">
+      <div v-if="showStressAlert" class="stress-alert" @click="showStressAlert = false">
+        <span class="stress-alert-icon">⚠️</span>
+        <span class="stress-alert-message">{{ stressAlertMessage }}</span>
+        <span class="stress-alert-count">壓力事件：{{ stressEventCount }} 次</span>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -265,6 +274,12 @@ const fsmState = ref('IDLE');
 const conceptCoverage = ref(0);
 const isLoading = ref(false);
 const errorMessage = ref('');
+
+// Grove Vision state (student attention monitoring)
+const stressEventCount = ref(0);
+const showStressAlert = ref(false);
+const stressAlertMessage = ref('');
+let groveVisionWs = null;
 
 // Question selection state
 const showQuestionModal = ref(false);
@@ -397,6 +412,9 @@ async function startSession() {
     chatMessages.value = [];
     addMessage('ai', data.message || '歡迎來到講題模式！請開始講解你的解題思路。');
     
+    // Start Grove Vision monitoring
+    await startGroveVisionMonitoring(data.session_id);
+    
     status.value = 'listening';
   } catch (err) {
     errorMessage.value = err.message || '開始會話失敗';
@@ -474,6 +492,9 @@ async function endSession() {
   isLoading.value = true;
   
   try {
+    // Stop Grove Vision monitoring first
+    const groveVisionSummary = await stopGroveVisionMonitoring();
+    
     const response = await fetch(`/api/sessions/${sessionId.value}/end`, {
       method: 'POST'
     });
@@ -485,13 +506,14 @@ async function endSession() {
     
     const data = await response.json();
     
-    // Show summary
+    // Show summary with stress events
     const summaryText = `
 📊 講題總結：
 • 時長：${Math.round(data.duration / 60)} 分鐘
 • 完成度：${Math.round(data.concept_coverage * 100)}%
 • 對話輪數：${data.total_turns}
 • 使用提示：${data.hints_used.length} 次
+• 學生壓力事件：${stressEventCount.value} 次
     `.trim();
     
     addMessage('ai', summaryText, 'SUMMARY');
@@ -500,6 +522,7 @@ async function endSession() {
     sessionId.value = null;
     fsmState.value = 'IDLE';
     conceptCoverage.value = 0;
+    stressEventCount.value = 0;
     
   } catch (err) {
     errorMessage.value = err.message || '結束會話失敗';
@@ -869,6 +892,107 @@ async function warmupAsr() {
   }
 }
 
+// Grove Vision monitoring functions
+async function startGroveVisionMonitoring(sessionId) {
+  try {
+    // Reset stress count
+    stressEventCount.value = 0;
+    
+    // Start monitoring via API
+    const response = await fetch('/api/grove-vision/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('Grove Vision started:', data.message);
+      
+      // Connect WebSocket for real-time notifications
+      connectGroveVisionWebSocket();
+    }
+  } catch (err) {
+    console.warn('Grove Vision start failed:', err);
+    // Continue without Grove Vision - it's optional
+  }
+}
+
+async function stopGroveVisionMonitoring() {
+  try {
+    // Disconnect WebSocket
+    if (groveVisionWs) {
+      groveVisionWs.close();
+      groveVisionWs = null;
+    }
+    
+    // Stop monitoring via API
+    const response = await fetch('/api/grove-vision/stop', {
+      method: 'POST'
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      stressEventCount.value = data.stress_event_count;
+      return data;
+    }
+  } catch (err) {
+    console.warn('Grove Vision stop failed:', err);
+  }
+  return { stress_event_count: stressEventCount.value };
+}
+
+function connectGroveVisionWebSocket() {
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${window.location.host}/api/grove-vision/ws`;
+  
+  try {
+    groveVisionWs = new WebSocket(wsUrl);
+    
+    groveVisionWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'stress_event') {
+          // Update stress count
+          stressEventCount.value = data.total_count;
+          
+          // Show alert notification
+          showStressNotification(data.label, data.confidence);
+        }
+      } catch (e) {
+        console.warn('WebSocket message parse error:', e);
+      }
+    };
+    
+    groveVisionWs.onerror = (error) => {
+      console.warn('Grove Vision WebSocket error:', error);
+    };
+    
+    groveVisionWs.onclose = () => {
+      console.log('Grove Vision WebSocket closed');
+    };
+  } catch (err) {
+    console.warn('Failed to connect Grove Vision WebSocket:', err);
+  }
+}
+
+function showStressNotification(label, confidence) {
+  // Map label to friendly message
+  const messages = {
+    '閉眼': '😴 偵測到閉眼，要專心喔！',
+    '打哈欠': '🥱 偵測到打哈欠，休息一下再繼續吧！'
+  };
+  
+  stressAlertMessage.value = messages[label] || '⚠️ 要專心喔！';
+  showStressAlert.value = true;
+  
+  // Auto hide after 3 seconds
+  setTimeout(() => {
+    showStressAlert.value = false;
+  }, 3000);
+}
+
 onMounted(() => {
   // Load problem from route params if available
   if (route.query.questionId) {
@@ -891,9 +1015,16 @@ onUnmounted(() => {
     recordingStream.getTracks().forEach(track => track.stop());
   }
   
+  // Clean up Grove Vision WebSocket
+  if (groveVisionWs) {
+    groveVisionWs.close();
+    groveVisionWs = null;
+  }
+  
   // Clean up session if still active
   if (sessionId.value) {
     fetch(`/api/sessions/${sessionId.value}/end`, { method: 'POST' }).catch(() => {});
+    fetch('/api/grove-vision/stop', { method: 'POST' }).catch(() => {});
   }
 });
 </script>
@@ -1486,6 +1617,79 @@ onUnmounted(() => {
 @keyframes slideUp {
   from { transform: translateX(-50%) translateY(20px); opacity: 0; }
   to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+/* Stress Alert Notification */
+.stress-alert {
+  position: fixed;
+  top: 5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(234, 88, 12, 0.95));
+  color: white;
+  border-radius: 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+  z-index: 300;
+  box-shadow: 0 8px 32px rgba(245, 158, 11, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.stress-alert-icon {
+  font-size: 1.5rem;
+  animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.stress-alert-message {
+  font-weight: 600;
+}
+
+.stress-alert-count {
+  padding: 0.25rem 0.5rem;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+}
+
+/* Stress alert transition */
+.stress-alert-enter-active {
+  animation: stressAlertIn 0.4s ease;
+}
+
+.stress-alert-leave-active {
+  animation: stressAlertOut 0.3s ease;
+}
+
+@keyframes stressAlertIn {
+  from {
+    transform: translateX(-50%) translateY(-30px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes stressAlertOut {
+  from {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-50%) translateY(-30px);
+    opacity: 0;
+  }
 }
 
 /* Responsive Design */

@@ -37,6 +37,7 @@ from backend.routers import (
 )
 from backend.routers.student_metrics import router as student_metrics_router
 from backend.routers.practice import router as practice_router
+from backend.routers.grove_vision import router as grove_vision_router
 
 
 @asynccontextmanager
@@ -102,6 +103,7 @@ app.include_router(subjects_router, prefix="/api")
 app.include_router(student_router, prefix="/api")
 app.include_router(student_metrics_router)  # Already has /api prefix
 app.include_router(practice_router)  # Already has /api prefix
+app.include_router(grove_vision_router)  # Already has /api prefix
 
 # Serve uploaded files (teacher ID documents, etc.)
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")

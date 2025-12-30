@@ -24,6 +24,11 @@ build/
 *.sqlite
 *.sqlite3
 
+# logs
+*.log
+log/
+**/log/
+
 # mac
 .DS_Store
 

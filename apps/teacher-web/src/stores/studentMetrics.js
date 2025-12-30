@@ -71,6 +71,8 @@ export const useStudentMetricsStore = defineStore('studentMetrics', () => {
       
       const data = await response.json();
       console.log('Summary data received:', data);
+      console.log('Total sessions from API:', data.total_sessions);
+      console.log('Accuracy from API:', data.accuracy_rate?.value);
       summary.value = data;
       lastUpdated.value = new Date();
     } catch (err) {
@@ -174,12 +176,24 @@ export const useStudentMetricsStore = defineStore('studentMetrics', () => {
   }
   
   async function fetchAllData(studentId) {
-    await Promise.all([
-      fetchSummary(studentId),
-      fetchTrends(studentId, 'week'),
-      fetchErrorAnalysis(studentId),
-      fetchSessions(studentId)
-    ]);
+    console.log('fetchAllData called for student:', studentId);
+    try {
+      await fetchSummary(studentId);
+      console.log('Summary fetched, current summary:', summary.value);
+      
+      await fetchTrends(studentId, 'week');
+      console.log('Trends fetched');
+      
+      await fetchErrorAnalysis(studentId);
+      console.log('Error analysis fetched');
+      
+      await fetchSessions(studentId);
+      console.log('Sessions fetched');
+      
+      console.log('All data fetched successfully');
+    } catch (err) {
+      console.error('Error in fetchAllData:', err);
+    }
   }
   
   function reset() {
